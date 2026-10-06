@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-labelledby="t d">
+  <title id="t">lidar-body-scan</title>
+  <desc id="d">Pipeline: capture, fuse, mesh, smooth, Sionna RT. A detector finds rotating objects and people and gives the centre to the fusion.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1514"/>
+      <stop offset="1" stop-color="#14262a"/>
+    </linearGradient>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3fd0b9"/>
+    </marker>
+    <marker id="ahv" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b7a2f7"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="400" rx="18" fill="url(#bg)"/>
+  <!-- scan lines: the stripes the smoothing removes -->
+  <g stroke="#3fd0b9" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 24H1200M0 48H1200M0 72H1200M0 96H1200"/>
+  </g>
+  <text x="48" y="74" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="46" font-weight="700" fill="#e5eeec">lidar-body-scan</text>
+  <text x="50" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#9bada9">From a person turning in front of an Ouster OS0-128 to a closed, smooth mesh for radio ray tracing.</text>
+
+  <!-- pipeline -->
+  <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+    <g transform="translate(48,150)">
+      <rect width="190" height="96" rx="12" fill="#10201f" stroke="#3fd0b9" stroke-width="1.6"/>
+      <text x="16" y="30" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#3fd0b9">capture-turntable</text>
+      <text x="16" y="50" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#3fd0b9">capture-inplace</text>
+      <text x="16" y="78" font-size="14" fill="#9bada9">record the turn</text>
+    </g>
+    <g transform="translate(278,150)">
+      <rect width="190" height="96" rx="12" fill="#10201f" stroke="#3fd0b9" stroke-width="1.6"/>
+      <text x="16" y="30" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#3fd0b9">fuse</text>
+      <text x="16" y="50" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#3fd0b9">fuse-inplace</text>
+      <text x="16" y="78" font-size="14" fill="#9bada9">views to one cloud</text>
+    </g>
+    <g transform="translate(508,150)">
+      <rect width="190" height="96" rx="12" fill="#10201f" stroke="#3fd0b9" stroke-width="1.6"/>
+      <text x="16" y="30" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#3fd0b9">mesh</text>
+      <text x="16" y="78" font-size="14" fill="#9bada9">closed triangle mesh</text>
+    </g>
+    <g transform="translate(738,150)">
+      <rect width="190" height="96" rx="12" fill="#10201f" stroke="#f0a05a" stroke-width="2"/>
+      <text x="16" y="30" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#f0a05a">smooth</text>
+      <text x="16" y="78" font-size="14" fill="#9bada9">tunable, volume kept</text>
+    </g>
+    <g transform="translate(968,150)">
+      <rect width="184" height="96" rx="12" fill="#3fd0b9" fill-opacity="0.14" stroke="#3fd0b9" stroke-width="1.6"/>
+      <text x="16" y="34" font-size="20" font-weight="700" fill="#e5eeec">Sionna RT</text>
+      <text x="16" y="78" font-size="14" fill="#9bada9">radio ray tracing</text>
+    </g>
+  </g>
+  <g stroke="#3fd0b9" stroke-width="2" fill="none">
+    <path d="M238 198H274" marker-end="url(#ah)"/>
+    <path d="M468 198H504" marker-end="url(#ah)"/>
+    <path d="M698 198H734" marker-end="url(#ah)"/>
+    <path d="M928 198H964" marker-end="url(#ah)"/>
+  </g>
+
+  <!-- detector -->
+  <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+    <rect x="48" y="294" width="420" height="64" rx="12" fill="#17142a" stroke="#b7a2f7" stroke-width="1.6"/>
+    <text x="64" y="320" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="14" fill="#b7a2f7">detect --rotation --human</text>
+    <text x="64" y="342" font-size="14" fill="#9bada9">finds rotating objects and people in any recording</text>
+  </g>
+  <path d="M373 294V250" stroke="#b7a2f7" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#ahv)"/>
+  <text x="386" y="276" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#b7a2f7">--center X Y</text>
+
+  <!-- numbers -->
+  <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+    <text x="540" y="320" font-size="14" fill="#9bada9">tt16, defaults:</text>
+    <text x="540" y="344" font-size="14" fill="#e5eeec">facet noise p90 13.1° to 2.0°, bump height 0.48 mm to 0.31 mm</text>
+    <text x="540" y="366" font-size="14" fill="#9bada9">on 396,286 triangles, volume kept</text>
+  </g>
+</svg>
