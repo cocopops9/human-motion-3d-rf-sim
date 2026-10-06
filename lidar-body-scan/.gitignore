@@ -9,6 +9,7 @@ dist/
 *.pcd
 *.png
 !docs/images/*.png
+!docs/img/*.png
 out/
 runs/
 

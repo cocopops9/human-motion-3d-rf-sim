@@ -122,9 +122,11 @@ Only numpy and open3d are needed for the processing; matplotlib (plots) is optio
 
 On a PC where new software can only be installed through MATLAB, use the Python that MATLAB uses (`pyenv` in MATLAB shows it) and install the packages for it from MATLAB's Add-On Explorer or with that interpreter. Nothing has to be installed for the package itself: clone the repository and run the commands from its folder.
 
+This package lives in the `lidar-body-scan/` folder of the `human-motion-3d-rf-sim` repository:
+
 ```
-git clone https://github.com/cocopops9/lidar-body-scan.git
-cd lidar-body-scan
+git clone https://github.com/cocopops9/human-motion-3d-rf-sim.git
+cd human-motion-3d-rf-sim/lidar-body-scan
 python -m bodyscan --help
 ```
 
