@@ -69,8 +69,8 @@
 
   <!-- numbers -->
   <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
-    <text x="540" y="320" font-size="14" fill="#9bada9">tt16, defaults:</text>
-    <text x="540" y="344" font-size="14" fill="#e5eeec">facet noise p90 13.1° to 2.0°, bump height 0.48 mm to 0.31 mm</text>
-    <text x="540" y="366" font-size="14" fill="#9bada9">on 396,286 triangles, volume kept</text>
+    <text x="540" y="320" font-size="14" fill="#9bada9">tt11 (pepito), level 4 of 10:</text>
+    <text x="540" y="344" font-size="14" fill="#e5eeec">facet noise p90 3.8° to 1.9°, bump height 0.15 mm to 0.03 mm</text>
+    <text x="540" y="366" font-size="14" fill="#9bada9">on 383,764 triangles, volume kept</text>
   </g>
 </svg>

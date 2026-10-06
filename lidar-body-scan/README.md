@@ -30,7 +30,7 @@ A person stands on a motorized turntable (or turns on the spot by small steps) i
   <img src="docs/img/stages_full.png" alt="The same person as a point cloud, a mesh and a smoothed mesh" width="100%">
 </p>
 
-<p align="center"><sub>Real data, run <code>tt16</code>. Left: the fused cloud. Middle: the mesh straight from the conversion. Right: the same triangles after <code>smooth</code>. Both meshes are drawn with flat shading, which is what a ray tracer reflects on.</sub></p>
+<p align="center"><sub>Real data, the scan <code>pepito</code> (run tt11). Left: the fused cloud. Middle: the mesh straight from the conversion. Right: the same triangles after <code>smooth</code> (level 4 of 10). Both meshes are drawn with flat shading, which is what a ray tracer reflects on.</sub></p>
 
 Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks smooth to the wave when its bumps stay under λ/8 = 0.62 mm. A raw scan has stripes a few millimetres tall, so triangle normals point in many directions and reflected rays scatter. The working assumption of this project is that Sionna RT reflects on the face normals, so the geometry itself has to be smooth (this assumption has not been checked against Sionna).
 
@@ -38,7 +38,7 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
   <img src="docs/img/turntable.gif" alt="The smoothed mesh turning" width="360">
 </p>
 
-<p align="center"><sub>The smoothed mesh of <code>tt16</code>. An interactive 3D version is in <a href="docs/models/person_tt16_smooth_preview.stl"><code>docs/models/person_tt16_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
+<p align="center"><sub>The smoothed mesh of <code>pepito</code>. An interactive 3D version is in <a href="docs/models/person_pepito_smooth_preview.stl"><code>docs/models/person_pepito_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
 
 ---
 
@@ -68,31 +68,31 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
 
 The scan rows leave horizontal stripes. In the middle panel every stripe tilts the triangles up or down, and a ray bouncing there would be deflected by twice the tilt. In the right panel the stripes are gone and the body shape is kept.
 
-Measured on the whole `tt16` body (396,286 triangles), with the default settings:
+Measured on the whole `pepito` body (383,764 triangles). The smoothing is level 4 of the ten-step ladder below: `--scale-mm 12 --rounds 2`, plus the 2 default finishing rounds at 6 mm.
 
 | | before `smooth` | after `smooth` |
 |---|---|---|
-| facet normal noise, median | 3.59° | 0.64° |
-| facet normal noise, 90th percentile | 13.07° | 1.98° |
-| bump height, rms | 0.479 mm | 0.307 mm |
-| distance moved from the input | none | median 1.02 mm, 99th percentile 5.35 mm, max 9.71 mm |
-| volume | 98.71 l | kept |
+| facet normal noise, median | 1.28° | 0.71° |
+| facet normal noise, 90th percentile | 3.77° | 1.93° |
+| facet normal noise, 99th percentile | 18.33° | 4.98° |
+| bump height, rms | 0.147 mm | 0.031 mm |
+| distance moved from the input | none | median 0.57 mm, 99th percentile 3.60 mm, max 6.96 mm |
+| volume | 94.79 l | 94.79 l (kept) |
 
 ### Choosing the strength
 
-`smooth` has no fixed levels: you set the parameters. The images show ten settings of one scan (`tt11`), from the lightest to the strongest; six of them are drawn here. Step 8 has the lowest 90th percentile. Step 10 is stronger but worse: 1 % of its facets are tilted by more than 91° and some vertices move 26 mm.
+`smooth` has no fixed levels: you set the parameters. The ladder below is ten settings of the same scan, from the lightest (level 1) to the strongest (level 10); five of them are drawn here. Level 8 has the lowest 90th percentile of the ten (1.46°). Level 10 is stronger but worse: 1 % of its facets are tilted by more than 91° and some vertices move 26 mm.
 
 <p align="center">
-  <img src="docs/img/ladder_tt11.png" alt="Six smoothing strengths of the same scan" width="100%">
+  <img src="docs/img/ladder_tt11.png" alt="Four smoothing strengths of the same scan, next to the unsmoothed mesh" width="100%">
 </p>
 
-| Step | scale | rounds | finishing | facet noise p90 | facet noise p99 | largest move |
+| Level | scale | rounds | finishing | facet noise p90 | facet noise p99 | largest move |
 |---|---|---|---|---|---|---|
 | input | none | none | none | 3.77° | 18.33° | 0 mm |
 | 1 | 6 mm | 1 | none | 2.86° | 6.68° | 3.1 mm |
-| 3 | 12 mm | 1 | 2 at 6 mm | 2.13° | 5.08° | 5.8 mm |
-| 5 | 12 mm | 4 | 2 at 6 mm | 1.72° | 5.10° | 8.6 mm |
-| 8 | 16 mm | 8 | 2 at 6 mm | **1.46°** | 11.13° | 18.2 mm |
+| 4 | 12 mm | 2 | 2 at 6 mm | 1.93° | 4.98° | 7.0 mm |
+| 6 | 12 mm | 8 | 2 at 6 mm | 1.54° | 6.28° | 12.1 mm |
 | 10 | 24 mm | 8 | 2 at 6 mm | 1.92° | 90.82° | 26.2 mm |
 
 Read the 99th percentile and the largest move together with the median, not only the median. [docs/tuning.md](docs/tuning.md) explains every parameter, organised by symptom.
@@ -328,8 +328,9 @@ set BODYSCAN_SLOW_TESTS=1 && python -m unittest discover -s tests -t .   with th
 | synthetic in place (16 stops) | turns within 2.9 deg, fused cloud to truth median 1.6 mm |
 | tt16 mesh (conversion only) | closed, facet noise median 3.6 deg (p90 13.1), bump height rms 0.48 mm < λ/8 = 0.62 mm at 60 GHz |
 | tt16 mesh, then `smooth` (defaults) | facet noise median 0.6 deg (p90 2.0), bump height rms 0.31 mm, surface moved by 1.0 mm median (p99 5.4 mm) |
+| tt11 (pepito) mesh, then `smooth` level 4 | facet noise median 0.71 deg (p90 1.93), bump height rms 0.031 mm, volume kept, surface moved by 0.57 mm median (p99 3.6 mm) |
 | detection on tt13, tt14, tt15 | the person only (furniture, boxes and stands rejected) |
 
 <br>
 
-<p align="center"><sub>The pictures were rendered from the real <code>tt16</code> and <code>tt11</code> scans with a plain ray caster (no textures, flat shading), so they show the geometry a ray tracer sees.</sub></p>
+<p align="center"><sub>The pictures were rendered from the real <code>pepito</code> scan (run tt11) with a plain ray caster (no textures, flat shading), so they show the geometry a ray tracer sees.</sub></p>
