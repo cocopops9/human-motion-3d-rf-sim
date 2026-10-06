@@ -11,3 +11,5 @@ dist/
 !docs/images/*.png
 out/
 runs/
+
+!results/**/*.ply
