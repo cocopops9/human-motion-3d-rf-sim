@@ -1,0 +1,11 @@
+# The smoothing that 'bodyscan mesh' applied by itself up to version 1.0
+# (bilateral filter at 6 mm, crease-preserving normal sigma 0.35, one round,
+# no volume restoration): use it on the output of the current 'mesh' to
+# reproduce a mesh made before the conversion and the smoothing were separated.
+#   python -m bodyscan smooth person_mesh.ply --config configs/smooth_previous_mesh.toml --out person_smooth.ply
+[smoothing]
+scale_mm = 6.0
+rounds = 1
+finish_rounds = 0
+normal_sigma = 0.35
+keep_volume = false

@@ -1,0 +1,14 @@
+# Finer mesh: watertight grid of 2 mm and a Poisson octree of depth 10. Gaps
+# down to about 3 mm (between spread fingers, if the fused cloud keeps them)
+# stay open; the default 4 mm grid seals gaps narrower than about 6 mm. The
+# automatic vertex passes (61 on this grid) smooth it like the defaults. On tt16:
+# facet normal noise 1.29 deg median, 4.6 deg at the 90th percentile, bump
+# height rms 0.41 mm, distance from the cloud 0.66 mm (the defaults: 1.42,
+# 4.7, 0.41, 0.68). Cost: about 1.6 million triangles (4 times the defaults),
+# 5 minutes and 2.7 GB of memory.
+#   python -m bodyscan mesh person.ply --config configs/mesh_detail_2mm.toml --out person_mesh.ply
+[reconstruction]
+depth = 10
+
+[closing]
+watertight = 0.002

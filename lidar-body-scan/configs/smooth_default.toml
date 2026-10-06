@@ -1,0 +1,22 @@
+# Smoothing of an existing mesh (all values are used as given).
+[smoothing]
+scale_mm = 12.0  # spatial scale (Gaussian sigma) of the filter: every facet averages the facets within twice this distance [mm]
+rounds = 4  # number of times the filter is applied
+finish_rounds = 2  # rounds at finish_scale_mm after the main rounds (only when finish_scale_mm is smaller than scale_mm; 0 = none)
+finish_scale_mm = 6.0  # spatial scale of the finishing rounds [mm]
+normal_sigma = 1.5  # bilateral range sigma: how different two facet normals may be and still be averaged (difference of unit normals; 0.35 is about 20 deg, 1.5 is nearly isotropic)
+normal_iterations = 4  # normal filtering passes per round
+vertex_iterations = 0  # vertex update passes per round; 0 = automatic: 15 for a median edge of 3.6 mm, times (3.6 mm / edge)^2, times (scale / 12 mm)^2 above 12 mm
+relax_iterations = 5  # tangential relaxation passes before the first round (better shaped triangles, the surface does not move)
+keep_volume = true  # offset the surface along its normals to restore the input volume after every round (closed meshes only)
+max_deviation_mm = 0.0  # keep every vertex within this distance of the input surface (0 = no limit) [mm]
+smooth_limit = true  # with a limit: pull the vertices back with a smooth correction (averaged over about 1.5 edges) before the hard clamp
+
+# Comparison of several values (one mesh per combination).
+[compare]
+sweep = []  # NAME=V1,V2,... : run once per value of a smoothing parameter and write one mesh per value, <out>_<name><value>.ply; several sweeps run every combination. Example: --sweep rounds=1,2,4,8 scale_mm=6,12
+
+# Quality report.
+[report]
+frequency_ghz = 60.0  # carrier frequency (roughness targets lambda / 8 and lambda / 32) [GHz]
+radius = 0.01  # neighbourhood of the facet-noise and bump-height measures [m]

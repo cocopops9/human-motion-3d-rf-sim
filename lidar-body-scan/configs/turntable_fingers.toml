@@ -1,0 +1,8 @@
+# EXPERIMENTAL: finer fusion for the hands. Smaller voxel, support and
+# surface-fit neighbourhoods keep gaps of about 1 cm open in the fused cloud;
+# the surface is noisier elsewhere. See docs/hardware.md.
+#   python -m bodyscan fuse C:\lidar\tt17 --config configs/turntable_fingers.toml --out person_tt17_fine
+[fusion]
+voxel = 0.003
+support_radius = 0.012
+confidence_radius = 0.006

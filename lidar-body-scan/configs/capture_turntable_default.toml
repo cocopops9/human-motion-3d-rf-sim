@@ -1,0 +1,28 @@
+# The sensor (or a recording, to test a protocol without the sensor).
+[sensor]
+source = "os-122542000054.local"  # sensor hostname or IP address, or a .osf/.pcap recording
+auto_udp_dest = false  # let the SDK set the UDP destination of the sensor (the lab PC needs the stored one)
+compress = false  # compressed frame files: half the size, but about 0.1 s of CPU per frame, so the writer falls behind and finishes after the capture
+
+# Empty scene, countdown, still periods.
+[timing]
+background_seconds = 3.0  # empty-scene recording at the start (nobody near the platform or the mark) [s]
+delay = 15.0  # countdown to take position and pose [s]
+hold = 3.0  # standing still before and after the turn (motor mode) [s]
+
+# Platform driven by this PC over the serial port (omit motor_port to drive it from MATLAB).
+[motor]
+motor_port = "none"  # serial port of the turntable controller, e.g. COM3; not set: the platform is started by girogirotondo_timer.m on the other PC
+baudrate = 9600  # serial speed
+motor_boot = 2.5  # wait after opening the port (the controller resets) [s]
+turn_deg = "none"  # turn of the platform (motor mode: default 360, negative turns the other way; two-PC mode: the turn set in MATLAB, stored for the fusion) [deg]
+max_steps_per_command = 28800  # longer turns are sent as several commands of at most this many steps (one lap, known to work)
+max_rotation_seconds = 300.0  # safety stop: a motor command without 'T done' within this ends the capture (one lap takes about 90 s) [s]
+
+# Platform driven by girogirotondo_timer.m on another PC: length of the recording.
+[two_pc]
+duration = "none"  # record this long; not set: computed from turn_deg and the platform timing below, or until ENTER without turn_deg [s]
+platform_delay = 60.0  # delay_s of girogirotondo_timer.m [s]
+lap_seconds = 89.75  # time of one lap of the platform (measured 2026-10-01: 4.01 deg/s) [s]
+margin = 8.0  # recording kept after the computed end of the rotation [s]
+max_record_seconds = 1800.0  # safety stop of a recording that waits for ENTER [s]

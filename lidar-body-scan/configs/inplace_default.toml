@@ -1,0 +1,73 @@
+# Reading the frames.
+[frames]
+min_range = 0.3  # returns closer than this are ignored [m]
+max_range = 10.0  # returns farther than this are ignored [m]
+
+# Floor detection in the empty scene (defines the floor frame: z up, z = 0 on the floor).
+[floor]
+up = [0.0, 0.0, 1.0]  # rough up direction in the sensor frame
+max_tilt_deg = 60.0  # largest angle between the floor normal and the up direction [deg]
+min_sensor_height = 0.2  # lowest accepted height of the sensor above the floor [m]
+max_sensor_height = 4.0  # highest accepted height of the sensor above the floor [m]
+ransac_threshold = 0.02  # RANSAC inlier distance of the plane search [m]
+refit_band = 0.015  # final least-squares refit on the points within this of the plane [m]
+
+# Where the person stands. Without a crop box or a centre, the person is
+[region]
+crop_min = "none"  # crop box, lower corner in the SENSOR frame (X Y Z) [m]
+crop_max = "none"  # crop box, upper corner in the sensor frame (X Y Z) [m]
+center = "none"  # centre of the person region in the floor frame (X Y); the region is a cylinder of radius [isolation] radius [m]
+
+# Cutting the person out of every frame (floor frame, platform centre known).
+[isolation]
+radius = 0.9  # person region: radius around the platform centre [m]
+min_height = 0.025  # drop points below this height above the floor [m]
+max_height = 2.3  # drop points above this height [m]
+bg_threshold = 0.05  # a pixel is foreground if closer than the empty scene by this [m]
+bg_relative = 0.01  # ... or by this fraction of its range, whichever is larger
+edge_jump = 0.05  # mixed-pixel filter: range jump on both sides of a pixel (0 = off) [m]
+cluster_eps = 0.06  # only the largest cluster is kept; DBSCAN distance (0 = off) [m]
+normal_radius = 0.05  # neighbourhood of the per-frame normal estimate [m]
+min_columns = 0.9  # drop a frame that received less than this fraction of its columns (lost UDP packets)
+max_person_loss = 0.1  # drop a frame if more than this fraction of the columns across the person was lost (UDP packets)
+
+# Still periods and keyframes (in-place capture).
+[stills]
+motion_threshold = 0.03  # range change that counts as motion for a pixel [m]
+still_factor = 2.5  # a frame is still when its motion score is below this times the 20th percentile of the scores
+still_max = 0.25  # upper bound of the still threshold (fraction of changed person pixels)
+min_still = 5  # shortest still period [frames]
+keyframe_frames = 20  # frames (centre of each still period) in the per-pixel median; 20 frames = 2 s, about half a breath [frames]
+min_pixels = 800  # frames with fewer person pixels are ignored
+keyframe_stride = 1  # use every n-th still period
+skip_seconds = 0.0  # ignore the start of the capture [s]
+
+# Registration of the keyframes (one per stop) of a person turning in place.
+[registration]
+reg_voxel = 0.012  # voxel of the clouds registered [m]
+body_radius = 0.1  # distance from the visible surface to the body's vertical axis [m]
+fine_distance = 0.025  # overlap distance of the registration quality [m]
+max_step = 90.0  # largest turn between two stops that is searched [deg]
+hypothesis_step = 10.0  # spacing of the yaw search [deg]
+sense_tolerance = 0.1  # overlap a match in the majority turning sense may lose and still replace a match turning the other way
+loop_max_angle = 60.0  # keyframes farther apart than this in turn are not registered [deg]
+min_fitness = 0.3  # pairs with less overlap are not used
+max_correction = 10.0  # bound of the turn correction of a pair from the model [deg]
+max_shift = 0.1  # bound of the shift correction of a pair from the model [m]
+max_tilt = 5.0  # largest lean between two stops (0 = turn and shift only, 4 DOF) [deg]
+
+# Non-rigid correction by horizontal slabs (lean, head, hips).
+[slabs]
+slab_iterations = 2  # passes (0 = off)
+slab_height = 0.3  # height of a slab [m]
+slab_step = 0.1  # spacing of the slab centres [m]
+slab_max_turn = 10.0  # bound of a slab turn [deg]
+slab_max_shift = 0.05  # bound of a slab shift [m]
+
+# Fusion of the views: support filter, voxel averaging, robust surface fit.
+[fusion]
+min_views = 2  # support filter: a point needs neighbours from this many views (turntable: per lap of views; in place: keyframes)
+support_radius = 0.02  # neighbourhood of the support filter [m]
+voxel = 0.005  # voxel of the fused cloud [m]
+confidence_radius = 0.01  # neighbourhood of the surface fit and of the per-point confidence [m]
+surface_fit = true  # move every point onto the median surface of the view points around it (off: keep the noisier voxel averages)

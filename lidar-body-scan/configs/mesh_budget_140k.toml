@@ -1,0 +1,9 @@
+# Mesh with a triangle budget: about 140 000 triangles for a person instead of
+# about 400 000, by quadric decimation to a mean edge of 6 mm. Decimation
+# leaves kinks between the merged triangles: smooth the result afterwards.
+# A coarser grid (--watertight 0.006: about 175 000 triangles) keeps regular
+# triangles at a similar count.
+#   python -m bodyscan mesh person.ply --config configs/mesh_budget_140k.toml --out person_mesh.ply
+#   python -m bodyscan smooth person_mesh.ply --out person_smooth.ply
+[closing]
+target_edge_mm = 6.0

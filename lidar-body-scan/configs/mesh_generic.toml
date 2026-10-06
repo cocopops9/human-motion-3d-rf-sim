@@ -1,0 +1,9 @@
+# Any object or scene (not a person for ray tracing): open surface trimmed to
+# the data, no closing, no flat cut.
+#   python -m bodyscan mesh scan.ply --config configs/mesh_generic.toml --out scan_mesh.ply
+[reconstruction]
+trim_distance = 2.0
+
+[closing]
+watertight = 0.0
+clip_below = "none"

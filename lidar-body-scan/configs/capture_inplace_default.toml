@@ -1,0 +1,15 @@
+# The sensor (or a recording, to test a protocol without the sensor).
+[sensor]
+source = "os-122542000054.local"  # sensor hostname or IP address, or a .osf/.pcap recording
+auto_udp_dest = false  # let the SDK set the UDP destination of the sensor (the lab PC needs the stored one)
+compress = false  # compressed frame files: half the size, but about 0.1 s of CPU per frame, so the writer falls behind and finishes after the capture
+
+# Empty scene and countdown.
+[timing]
+background_seconds = 3.0  # empty-scene recording at the start (nobody near the platform or the mark) [s]
+delay = 15.0  # countdown to take position and pose [s]
+
+# The person turns on the spot by steps.
+[stepping]
+duration = 140.0  # capture length (two turns at 20 to 25 deg per step) [s]
+cue_every = 4.0  # a beep every this many seconds: turn by one step (20 to 30 deg), then hold still (0 = no cues) [s]

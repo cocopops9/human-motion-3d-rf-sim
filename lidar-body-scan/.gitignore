@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+# outputs of the commands
+*.ply
+*.pcd
+*.png
+!docs/images/*.png
+out/
+runs/
