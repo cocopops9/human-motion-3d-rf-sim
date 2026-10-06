@@ -1,0 +1,68 @@
+# Which frames are analysed.
+[frames]
+max_frames = 60  # frames used, spread evenly over the recording
+min_range = 0.3  # returns closer than this are ignored [m]
+max_range = 10.0  # returns farther than this are ignored [m]
+period = 0.1  # frame period of point-cloud folders (no timestamps) [s]
+body_radius = 0.1  # a person's centre lies this far behind the visible surface (seen from the sensor), when it is not given by a rotation axis [m]
+beam_spacing = 0.7  # vertical angle between beams, for point-cloud folders (range images take it from the sensor model); OS0-128: 0.70, OS0-64: 1.41 [deg]
+column_spacing = 0.176  # horizontal angle between columns, for point-cloud folders (2048 columns: 0.176, 1024: 0.352) [deg]
+
+# Floor detection in the empty scene (defines the floor frame: z up, z = 0 on the floor).
+[floor]
+up = [0.0, 0.0, 1.0]  # rough up direction in the sensor frame
+max_tilt_deg = 60.0  # largest angle between the floor normal and the up direction [deg]
+min_sensor_height = 0.2  # lowest accepted height of the sensor above the floor [m]
+max_sensor_height = 4.0  # highest accepted height of the sensor above the floor [m]
+ransac_threshold = 0.02  # RANSAC inlier distance of the plane search [m]
+refit_band = 0.015  # final least-squares refit on the points within this of the plane [m]
+
+# Cutting every frame into objects (floor frame).
+[segmentation]
+min_height = 0.1  # ignore points below this height (floor, platform) [m]
+max_height = 2.4  # ignore points above this height (ceiling, lamps) [m]
+max_distance = 8.0  # ignore points farther than this from the sensor (horizontal) [m]
+voxel = 0.02  # points are thinned to one per voxel of this size before clustering [m]
+cluster_distance = 0.1  # points closer than this belong to the same object [m]
+min_points = 60  # smallest object (thinned points)
+wall_min_points = 3000  # a vertical plane with at least this many points of the static scene is a wall and is removed (objects mode)
+wall_distance = 0.06  # points within this of a wall are removed [m]
+bg_threshold = 0.1  # background mode: closer than the empty scene by this [m]
+
+# Following objects across frames.
+[tracking]
+track_distance = 0.5  # an object is the same as in an earlier frame if its centre moved less than this (horizontal) [m]
+min_frames = 3  # objects seen in fewer frames are ignored
+
+# Rotation test of every tracked object.
+[rotation]
+min_speed = 0.5  # slower objects are not rotating [deg/s]
+min_turn = 5.0  # pairs that turned less than this do not give an axis [deg]
+max_axis_spread = 0.1  # the axes of the pairs must agree within this (robust spread) [m]
+max_speed_spread = 0.35  # the speeds of the pairs must agree within this fraction (robust spread)
+min_sign_agreement = 0.8  # fraction of pairs turning the same way
+min_pairs = 4  # pairs needed for a decision
+max_pairs = 40  # at most this many pairs per object
+min_fitness = 0.5  # pairs whose registration overlap is below this are ignored
+registration_voxel = 0.02  # voxel of the clouds registered [m]
+group_distance = 0.15  # rotating objects whose axes are closer than this, turning at the same speed, are parts of one body (an arm split from the torso) [m]
+group_speed = 0.35  # speeds of parts of one body agree within this fraction (same direction)
+
+# Shape tests of a standing adult (see docs/parameters.md for their effect).
+[human]
+min_height = 1.2  # lowest top of a person above the floor [m]
+max_height = 2.3  # highest top of a person [m]
+max_bottom = 0.5  # the object must come down to this height at least (feet near the floor) [m]
+min_width = 0.12  # narrowest lateral extent [m]
+max_width = 2.0  # widest lateral extent (arms spread) [m]
+min_points = 80  # fewest points of an object (after thinning)
+min_column_fill = 0.85  # fraction of the 5 cm height slices from bottom to top with points
+max_vertical_gap = 0.3  # largest height range without points [m]
+min_area = 0.2  # smallest silhouette area seen from the sensor [m2]
+min_torso_width = 0.18  # narrowest solid torso (median run of occupied cells at 50 to 72 % of the height); a torso seen from the side is about 0.25 m deep [m]
+max_flat_fraction = 0.65  # hard limit: largest fraction of points whose normal lies within flat_angle of one of the 3 dominant directions (panels, cut-outs)
+curved_threshold = 0.45  # flat fraction at which the 'curved surface' feature scores 0.5 (people about 0.2 to 0.35, boxes and chairs 0.5 to 0.8)
+flat_angle = 10.0  # half angle of a dominant normal direction [deg]
+score_threshold = 0.6  # a frame passes when the mean score of the rectangle features reaches this
+min_pass_fraction = 0.5  # a tracked object is a person when this fraction of its frames pass
+min_pass_frames = 2  # and at least this many frames pass

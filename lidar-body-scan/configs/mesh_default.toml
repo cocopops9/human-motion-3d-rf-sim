@@ -1,0 +1,39 @@
+# Input region.
+[input]
+crop_min = "none"  # keep only points above this corner (X Y Z) [m]
+crop_max = "none"  # keep only points below this corner (X Y Z) [m]
+sensor_origin = [0.0, 0.0, 0.0]  # sensor position in the cloud's frame (grid method, orient 'sensor') [m]
+
+# Surface reconstruction.
+[reconstruction]
+method = "poisson"  # reconstruction method
+depth = 9  # Poisson octree depth
+trim_distance = 0.0  # Poisson: remove vertices farther than this many mean point spacings from the data (0 = keep the closed surface)
+density_quantile = 0.0  # Poisson: also trim vertices below this density quantile (0 = off)
+voxel = 0.0  # voxel downsampling before meshing (0 = off) [m]
+outlier_neighbors = 20  # statistical outlier removal: neighbours (0 = off)
+outlier_std = 2.0  # statistical outlier removal: threshold in standard deviations
+remove_plane = false  # remove the dominant plane (floor) first
+plane_threshold = 0.01  # plane removal distance [m]
+normal_radius = 0.0  # normal estimation radius (0 = 4 x mean spacing) [m]
+orient = "auto"  # normal orientation
+denoise = 0.0  # project each point onto its local plane (neighbours within this) before meshing (0 = off) [m]
+bpa_radii = [1.5, 3.0, 6.0]  # ball pivoting radii in mean point spacings
+alpha = 0.0  # alpha shape parameter (0 = 3 x mean spacing) [m]
+max_jump = 0.05  # grid: largest range spread inside a triangle [m]
+max_relative_jump = 0.03  # grid: range spread allowed as a fraction of the range
+wrap = true  # grid: connect the last column to the first (360 deg sensors)
+
+# Cleaning and closing the surface.
+[closing]
+watertight = 0.004  # rebuild a closed manifold mesh on a signed distance grid of this voxel (0 = off) [m]
+clip_below = 0.0  # cut the closed mesh flat at this height (flat soles at the platform top); not set: no cut [m]
+fill_holes = 0.0  # cap holes up to this size before closing (0 = off) [m]
+largest_component = false  # keep only the largest piece
+min_component = 0  # drop pieces with fewer triangles than this
+target_edge_mm = 0.0  # mean triangle edge after a quadric decimation (0 = no decimation: the grid of the watertight remesh, about 400 000 triangles for a person at 4 mm) [mm]
+
+# Quality report.
+[quality]
+frequency_ghz = 60.0  # carrier frequency the mesh is made for [GHz]
+radius = 0.01  # neighbourhood of the facet-noise and bump-height measures [m]

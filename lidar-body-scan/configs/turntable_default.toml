@@ -1,0 +1,98 @@
+# Reading the frames.
+[frames]
+min_range = 0.3  # returns closer than this are ignored [m]
+max_range = 10.0  # returns farther than this are ignored [m]
+
+# Floor detection in the empty scene (defines the floor frame: z up, z = 0 on the floor).
+[floor]
+up = [0.0, 0.0, 1.0]  # rough up direction in the sensor frame
+max_tilt_deg = 60.0  # largest angle between the floor normal and the up direction [deg]
+min_sensor_height = 0.2  # lowest accepted height of the sensor above the floor [m]
+max_sensor_height = 4.0  # highest accepted height of the sensor above the floor [m]
+ransac_threshold = 0.02  # RANSAC inlier distance of the plane search [m]
+refit_band = 0.015  # final least-squares refit on the points within this of the plane [m]
+
+# Turntable platform: where it is and how it looks in the empty scene.
+[platform]
+center = "none"  # platform centre in the floor frame (X Y) [m]; not set: found from the platform ring in the empty-scene frames
+search_start = "none"  # where the ring search starts (floor frame) [m]; not set: at the person found in the frames
+ring_search = 0.8  # search distance of the ring around the start [m]
+ring_radius = 0.582  # radius of the platform ring [m]
+platform_top = 0.03  # height of the platform top above the floor [m]
+
+# Cutting the person out of every frame (floor frame, platform centre known).
+[isolation]
+radius = 0.9  # person region: radius around the platform centre [m]
+min_height = 0.05  # drop points below this height above the floor [m]
+max_height = 2.3  # drop points above this height [m]
+bg_threshold = 0.05  # a pixel is foreground if closer than the empty scene by this [m]
+bg_relative = 0.01  # ... or by this fraction of its range, whichever is larger
+edge_jump = 0.05  # mixed-pixel filter: range jump on both sides of a pixel (0 = off) [m]
+cluster_eps = 0.06  # only the largest cluster is kept; DBSCAN distance (0 = off) [m]
+normal_radius = 0.05  # neighbourhood of the per-frame normal estimate [m]
+min_columns = 0.9  # drop a frame that received less than this fraction of its columns (lost UDP packets)
+max_person_loss = 0.1  # drop a frame if more than this fraction of the columns across the person was lost (UDP packets)
+
+# Platform angle versus time (any rotation: partial, one lap, several laps).
+[motion]
+turn_deg = "none"  # commanded rotation, if known (default: capture.json, else found in the data); used only when the data agree within --loop-tolerance [deg]
+move_deg = 360.0  # largest single motor command; longer rotations are split into moves of this size with short stops (0 = always one continuous move) [deg]
+sample_seconds = 0.5  # spacing of the frames registered for the angles [s]
+max_samples = 320  # at most this many frames are registered for the angles
+reg_voxel = 0.01  # voxel of the clouds registered for the angles [m]
+fine_distance = 0.02  # overlap distance of the registration quality [m]
+angle_source = "auto"  # where the frame angles come from
+model_agreement = 3.0  # auto: the motor model is used only within this rms of the model-free solution (and 3 times this at most) [deg]
+profile_tolerance = 15.0  # warn if the smoothed pair residual exceeds this [deg]
+loop_tolerance = 3.0  # the commanded turn is used if the data agree within this [deg]
+pair_min_deg = 20.0  # shortest turn of a long pair [deg]
+pair_max_deg = 60.0  # longest turn of a long pair [deg]
+max_pairs = 400  # at most this many long pairs
+revisit_pairs = 60  # pairs per lap one or more laps apart
+revisit_window = 30.0  # pairs whose predicted turn is within this of a whole number of laps [deg]
+boundary_margin = 0.6  # consecutive frames within this of every start and stop are registered too (timing of the moves); 0 = off [s]
+ignore_phases = false  # find the still parts and the turn in the data even if the capture labelled them
+huber_deg = 2.0  # outlier scale of the angle solve [deg]
+correction_spacing = 2.0  # free-form correction of the stepper profile: one knot every this many seconds (0 = off) [s]
+correction_smoothing = 3.0  # penalty on the curvature of the free-form correction
+
+# Views and the whole-view corrections.
+[views]
+view_step = 3.0  # one view every this many degrees of turn [deg]
+max_views = 400  # the step grows for long rotations so that at most this many views are used
+reference_groups = 9  # views split into this many groups at random; each view is corrected against the views of the other groups
+axis_iterations = 1  # refinements of the axis position from the view corrections (0 = off)
+max_tilt = 2.0  # sway correction bound: tilt [deg]
+max_turn_correction = 3.0  # sway correction bound: turn [deg]
+max_shift = 0.03  # sway correction bound: shift [m]
+max_dropped_views = 0.25  # views whose correction is out of bounds are dropped if they are at most this fraction of all views (otherwise kept, with a warning)
+view_range = "none"  # fuse only the views between these angles of the measured turn [deg], e.g. 0 360 for the first lap
+angle_iterations = 0  # passes of a per-view search of the platform angle against the other views (off: the motion model is already better, about 1 deg rms)
+angle_search = 15.0  # largest deviation from the motion model searched per view [deg]
+angle_truncation = 0.03  # distance cap of the alignment cost of the angle search [m]
+
+# Non-rigid correction by horizontal slabs (lean, head, hips).
+[slabs]
+slab_iterations = 1  # passes (0 = off)
+slab_height = 0.3  # height of a slab [m]
+slab_step = 0.1  # spacing of the slab centres [m]
+slab_max_turn = 5.0  # bound of a slab turn [deg]
+slab_max_shift = 0.03  # bound of a slab shift [m]
+
+# Per-arm correction of every view (A-pose: arms held away from the body).
+[limbs]
+limb_iterations = 2  # passes of the per-arm correction (0 = off)
+limb_min_height = 0.45  # arms are searched above this height [m]
+limb_min_offset = 0.2  # a part of a horizontal slice farther than this from the torso axis is an arm [m]
+limb_capture = 0.04  # view points within this of an arm of the union take its label [m]
+limb_max_turn = 12.0  # bound of the arm correction [deg]
+limb_max_shift = 0.06  # bound of the arm correction [m]
+limb_blend = 0.1  # the arm correction fades out over this length below the shoulder [m]
+
+# Fusion of the views: support filter, voxel averaging, robust surface fit.
+[fusion]
+min_views = 3  # support filter: a point needs neighbours from this many views (turntable: per lap of views; in place: keyframes)
+support_radius = 0.02  # neighbourhood of the support filter [m]
+voxel = 0.005  # voxel of the fused cloud [m]
+confidence_radius = 0.01  # neighbourhood of the surface fit and of the per-point confidence [m]
+surface_fit = true  # move every point onto the median surface of the view points around it (off: keep the noisier voxel averages)
