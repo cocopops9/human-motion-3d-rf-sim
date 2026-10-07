@@ -39,13 +39,13 @@ An Ouster OS0-128 spins 128 laser beams ten times per second and returns, for ev
 
 ### From the lab to the turntable
 
-The same lab during a real turntable scan (run tt9, the scan `pepito`): the empty room, Giuseppe walking from the PC to the platform, the camera flying to the platform, one lap of the platform, and the views fused into one cloud.
+The same lab during a real turntable scan (run tt9, the scan `pepito`): the empty room, Giuseppe walking from the PC to the platform, the camera flying to the platform, the wait for the motor, one lap of the platform, and the views fused into one cloud. The interactive tour below plays the same story in 3D, and its **GIF** button shows this animation.
 
 <p align="center">
   <img src="docs/img/lab_to_turntable.gif" alt="The lab, the person walking to the platform, the flight to the platform, the platform turning, and the views fused into one cloud" width="100%">
 </p>
 
-<p align="center"><sub>All real frames of one recording, drawn in the frame of the platform. The walk is the end of the empty-room phase (t = 3.8 to 5.9 s); the countdown during which he steps onto the platform (6 to 21 s) is not recorded, so the animation cuts there. From t = 21 s the platform turns at about 4°/s; the animation shows about one lap (frames 16 to 1071 of 3600) and then all 378 views of the 3.7 laps, each turned back by its platform angle.</sub></p>
+<p align="center"><sub>All real frames of one recording, drawn in the frame of the platform. The walk is the end of the empty-room phase (t = 3.8 to 5.9 s); the countdown during which he steps onto the platform (6 to 21 s) is not recorded, so the animation cuts there. The scan starts at t = 21 s with him standing still on the platform; the motor starts at about t = 39 s (frame 180) and the platform then turns at about 4°/s. The animation shows the wait and about one lap (frames 180 to 1110 of 3600, dial = measured platform angle), then all 378 views of the 3.7 laps, each turned back by its platform angle.</sub></p>
 
 ### Explore it in 3D
 

@@ -2,6 +2,10 @@
 
 ## Documentation (2026-10-07)
 
+- Story animation and tour: the wait on the platform before the motor starts
+  (t = 21 to 39 s) is shown, the dial uses the measured platform angle, the
+  tour shows the countdown card and has a GIF button with the 2D animation.
+
 - README: `docs/img/lab_to_turntable.gif`, one recording from the empty lab
   to the fused cloud (run tt9: the person walking from the PC, the flight to
   the platform, one lap, the fusion). The interactive tour now starts with the
