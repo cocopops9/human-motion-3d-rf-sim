@@ -11,28 +11,76 @@
 ![target](https://img.shields.io/badge/for-Sionna%20RT-b7a2f7?style=flat-square)
 ![motion](https://img.shields.io/badge/moving%20people-PyTorch%20%2B%20SMPL--X-ee4c2c?style=flat-square)
 
-**[Idea](#the-idea-in-one-picture)** ·
+**[Tour](#the-lab-through-the-lidar)** ·
+**[Pipeline](#the-pipeline-step-by-step)** ·
 **[Moving people](#moving-people)** ·
 **[Features](#features)** ·
 **[Gallery](#gallery)** ·
 **[Install](#installation)** ·
 **[Quick start](#quick-start-without-the-sensor)** ·
 **[Usage](#usage)** ·
+**[Architecture](#architecture)** ·
 **[Docs](#documentation)**
 
 </div>
 
 ---
 
-## The idea in one picture
+## The lab through the LiDAR
 
-A person stands on a motorized turntable (or turns on the spot by small steps) in front of an Ouster OS0-128 LiDAR. The sensor sees one side at a time. This package **fuses the views into one point cloud**, **converts it into a closed triangle mesh**, and **smooths the scan stripes away**, so that a radio ray tracer (Sionna RT) can bounce rays off the body.
+An Ouster OS0-128 spins 128 laser beams ten times per second and returns, for every beam and every one of 2048 directions, a distance and a reflectivity. One frame is therefore both a 3D point cloud and a 128 x 2048 panoramic image. Below is one real frame of the laboratory where the data of this project are recorded.
+
+<p align="center">
+  <img src="docs/img/lab_scan.gif" alt="One LiDAR frame of the lab: the beam sweeps 360 degrees and builds the point cloud, the same frame shown as a panoramic image" width="100%">
+</p>
+
+<p align="center"><sub>Real frame (run <code>person2</code>). Top: the 3D points, coloured by height and brightened by reflectivity, with the ceiling and the walls near the camera cut away; the orange dot is the sensor on its tripod. Bottom: the same frame as the sensor stores it, one row per beam and one column per azimuth. The person in amber is what differs from a recording of the empty room, which is also how the package finds people.</sub></p>
+
+### Explore it in 3D
+
+<p align="center">
+  <a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/viewer/index.html"><img src="docs/img/viewer_preview.png" alt="Interactive 3D tour: the lab, the fused views, the raw and smoothed meshes" width="100%"></a>
+</p>
+
+<p align="center"><b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/viewer/index.html">Open the interactive tour</a></b> · orbit the lab, play the turntable recording, fuse the 378 views one by one, and compare the raw and the smoothed mesh.<br><sub>A single self-contained page (<a href="docs/viewer/index.html"><code>docs/viewer/index.html</code></a>, about 9 MB, three.js). Locally: download it and open it in a browser (three.js is loaded from a CDN, so an internet connection is needed).</sub></p>
+
+---
+
+## The pipeline, step by step
+
+The static body scan takes a person from a turntable to a mesh that Sionna RT can use, in four commands. Apart from the lab frame in the first tile, every picture in this section is real data from one scan, called `pepito` (run tt11).
+
+<p align="center">
+  <img src="docs/img/pipeline_overview.png" alt="Pipeline: lab frame, turntable recording, fused cloud, mesh, smoothed mesh" width="100%">
+</p>
+
+### 1 · Record: the person turns, the sensor stays
+
+The person stands in an A-pose, palms forward, on a motorized platform about 1.6 m from the LiDAR. The platform turns at about 4 degrees per second, so one lap takes 90 s and gives 900 frames. Each frame sees only the side of the body that faces the sensor.
+
+### 2 · Fuse: every view goes back to the same body frame
+
+`fuse` finds the platform axis from the ring of the platform in the empty scene, estimates the platform angle for every frame, cuts the person out of the scene, turns every view back by its angle and fuses all of them into one cloud with normals and a per-point confidence.
+
+<p align="center">
+  <img src="docs/img/turntable_fusion.gif" alt="Left: raw frames of the person turning on the platform. Right: the views accumulating into one cloud" width="100%">
+</p>
+
+<p align="center"><sub>Left: raw frames of run tt11 as recorded, the person coloured by the platform angle (dial). Right: the views of the same run, each turned back by its angle, accumulating in the body frame with the same colours; at the end all 378 views (3.7 laps) coloured by height.</sub></p>
+
+### 3 · Mesh and 4 · Smooth
+
+`mesh` converts the cloud into a closed triangle mesh (Poisson reconstruction, a closed manifold remesh on a 4 mm grid, flat soles) and applies no smoothing. The stripes left on it are the scan rows of the LiDAR. `smooth` removes them while keeping the shape and the volume.
+
+<p align="center">
+  <img src="docs/img/cloud_mesh_smooth.gif" alt="Wipe from the fused cloud to the mesh, then to the smoothed mesh" width="100%">
+</p>
+
+<p align="center"><sub>The fused cloud, the mesh straight from the conversion, and the same triangles after <code>smooth</code> (level 4 of the ladder in the <a href="#gallery">gallery</a>). Flat shading with a small highlight, so every facet tilt is visible, as a mirror would show it.</sub></p>
 
 <p align="center">
   <img src="docs/img/stages_full.png" alt="The same person as a point cloud, a mesh and a smoothed mesh" width="100%">
 </p>
-
-<p align="center"><sub>Real data, the scan <code>pepito</code> (run tt11). Left: the fused cloud. Middle: the mesh straight from the conversion. Right: the same triangles after <code>smooth</code> (level 4 of 10). Both meshes are drawn with flat shading, which is what a ray tracer reflects on.</sub></p>
 
 Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks smooth to the wave when its bumps stay under λ/8 = 0.62 mm. A raw scan has stripes a few millimetres tall, so triangle normals point in many directions and reflected rays scatter. The working assumption of this project is that Sionna RT reflects on the face normals, so the geometry itself has to be smooth (this assumption has not been checked against Sionna).
 
@@ -40,7 +88,11 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
   <img src="docs/img/turntable.gif" alt="The smoothed mesh turning" width="360">
 </p>
 
-<p align="center"><sub>The smoothed mesh of <code>pepito</code>. An interactive 3D version is in <a href="docs/models/person_pepito_smooth_preview.stl"><code>docs/models/person_pepito_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
+<p align="center"><sub>The smoothed mesh of <code>pepito</code>. It is also in <a href="docs/models/person_pepito_smooth_preview.stl"><code>docs/models/person_pepito_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
+
+The commands of these four steps, with all their options, are in [Usage](#usage); how each step works is in [docs/algorithms.md](docs/algorithms.md).
+
+---
 
 ## Moving people
 
@@ -343,6 +395,30 @@ The tests of moving people need PyTorch and are skipped without it.
 
 ---
 
+## Architecture
+
+The package is organised in layers; a layer uses only the layers above it in this list, so a new setup (another sensor, no turntable, another body model) reuses everything except the part that changes.
+
+```
+bodyscan/
+    config.py        parameter declarations: options, files, documentation
+    geometry/        transforms, fitting (planes, circles), neighbours, clustering
+    io/              recordings on disk, sensor models, PLY writers
+    scene/           floor, background, platform, regions, isolation, stillness, coverage
+    registration/    ICP variants, turn solver, keyframe registration
+    motion/          platform angle against time: models, fitting, pairs, estimator
+    fusion/          views, per-view corrections, surface fusion
+    meshing/         reconstruction, cleanup, watertight remesh, smoothing, quality
+    detection/       segmentation, tracking, rotation test, person cascade
+    capture/         sensor access, run directory, phases, protocols, motor
+    pipelines/       the steps assembled for one setup
+    body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body
+    dynamic/         moving people: simulation, segmentation, avatar, tracking, evaluation, export
+    commands/        the command line
+```
+
+A pipeline is a list of steps that read and write named entries of a shared context; the turntable pipeline is `LoadTurntableRecording`, `SceneFromBackground`, `LocatePlatform`, `IsolatePerson`, `MeasureAngles`, `SelectViews`, `BuildViews`, `CorrectViews`, `FuseSurface`, `WriteOutputs`. Every parameter is declared once, as a dataclass field, and from that declaration come the command-line option, the TOML key, the `--set` override and the parameter reference. Only `capture` imports the Ouster SDK and only `body` and `dynamic` import PyTorch, so the static processing needs numpy and open3d only. Details and how to add a step or a command: [docs/architecture.md](docs/architecture.md).
+
 ## Documentation
 
 | Document | Read it for |
@@ -361,7 +437,7 @@ The tests of moving people need PyTorch and are skipped without it.
 |---|---|
 | `bodyscan/` | the Python package (run as `python -m bodyscan COMMAND`) |
 | `configs/` | configuration files: full defaults of every command, and variants |
-| `docs/` | technical documentation, the pictures of this page (`docs/img`) and a 3D preview (`docs/models`) |
+| `docs/` | technical documentation, the pictures and animations of this page (`docs/img`), the interactive tour (`docs/viewer`) and a 3D preview (`docs/models`) |
 | `matlab/` | `bodyscan.m` (runs a command with MATLAB's Python), `girogirotondo_timer.m` (platform from the other PC) |
 | `tests/` | unit and end-to-end tests on synthetic data |
 | `legacy/` | the single-file scripts this package replaces, kept to reproduce earlier results |
@@ -382,4 +458,4 @@ The tests of moving people need PyTorch and are skipped without it.
 
 <br>
 
-<p align="center"><sub>The pictures were rendered from the real <code>pepito</code> scan (run tt11) with a plain ray caster (no textures, flat shading), so they show the geometry a ray tracer sees.</sub></p>
+<p align="center"><sub>The pictures were rendered from real recordings (the lab frame of run <code>person2</code>, the <code>pepito</code> scan of run tt11) with a plain point splatter and ray caster (no textures, flat shading), so the meshes show the geometry a ray tracer sees.</sub></p>

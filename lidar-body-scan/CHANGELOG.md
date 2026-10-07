@@ -1,5 +1,16 @@
 # Changelog
 
+## Documentation (2026-10-07)
+
+- README: a visual tour from a real lab frame (`docs/img/lab_scan.gif`: the
+  beam sweep and the same frame as a 128 x 2048 image), the static pipeline
+  step by step (`pipeline_overview.png`, `turntable_fusion.gif` from the raw
+  frames and views of run tt11, `cloud_mesh_smooth.gif`), and an
+  Architecture section. Usage, results and the rest are unchanged.
+- `docs/viewer/index.html`: interactive 3D tour (three.js, data embedded):
+  the lab frame, the turntable recording, the fusion view by view, the mesh
+  and the smoothed mesh side by side.
+
 ## 1.2.0 (2026-10-06)
 
 ### New: moving people
