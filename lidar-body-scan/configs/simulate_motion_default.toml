@@ -1,0 +1,23 @@
+# The simulated take.
+[scenario]
+motion = "walk"  # walk, walk-circle, jump, jump-forward, stand, or an AMASS / PoseSequence .npz
+distance = 2.5  # distance of the motion from the LiDAR (walk: of the straight pass; circle: radius) [m]
+azimuth = 90.0  # direction of the motion seen from the LiDAR (0: the sensor's x axis, where the synthetic frames start and end) [deg]
+duration = 5.0  # walking time (walks) [s]
+speed = 1.15  # walking speed [m/s]
+jumps = 2  # number of jumps
+jump_height = 0.25  # rise of the pelvis above its take-off height in a jump [m]
+betas = []  # shape coefficients of the simulated person (empty: the average body)
+seed = 0  # random seed of the sensor noise
+scan = true  # also write scan.ply: a simulated turntable scan of the body (input of 'avatar')
+
+# The simulated LiDAR (an Ouster OS0-128 by default).
+[sensor]
+mode = "1024x20"  # columns x frames per second
+height = 1.0  # lens height above the floor [m]
+noise = 0.008  # range noise (one sigma) [m]
+body_dropout = 0.02  # probability that a beam on the body returns nothing
+grazing_dropout = 0.3  # additional dropout on the body at grazing incidence (x (1 - cos)^2)
+footprint_rays = 4  # sub-rays per beam (1: no beam footprint, no mixed pixels)
+mixed_fraction = 0.3  # probability of a mixed range at an edge between person and background
+background_frames = 10  # frames of the empty room

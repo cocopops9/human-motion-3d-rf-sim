@@ -1,0 +1,18 @@
+# Fitting the body model to the static scan of a person (turntable).
+[avatar]
+num_betas = 10  # shape coefficients fitted (SMPL-X has up to 300)
+level = 2  # subdivisions of the detailed surface (0: model resolution, about 10,000 vertices for SMPL-X; each level multiplies the triangles by 4: level 2 gives about 3.6 mm edges)
+sample_points = 30000  # scan points used by the pose and shape fit
+detail_points = 150000  # scan points used by the detail fit
+yaw_starts = 4  # facing directions tried when the shoulders and feet do not tell the front
+rounds = 8  # correspondence rounds of the pose and shape fit
+iterations = 25  # L-BFGS iterations per round
+robust_scale = 0.02  # distance at which a correspondence stops counting fully (Geman-McClure) [m]
+coverage = 0.04  # a model vertex is pulled to the scan only if a scan point lies within this [m]
+beta_weight = 0.001  # weight of the shape coefficients (keeps the shape plausible)
+pose_weight = 0.01  # weight keeping the joint rotations near the A-pose
+detail_rounds = 4  # correspondence rounds of the detail fit
+smoothness = 0.5  # weight of the slope of the displacements between neighbouring vertices (larger: smoother detail, smaller: follows the scan noise)
+max_displacement = 0.05  # displacements are limited to this [m]
+keep_hands = true  # keep the model's hands and fingers (the LiDAR does not resolve fingers)
+device = "auto"  # PyTorch device: auto (CUDA when available), cpu, cuda

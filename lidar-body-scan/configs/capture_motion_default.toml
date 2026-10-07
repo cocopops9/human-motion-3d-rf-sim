@@ -1,0 +1,13 @@
+# The sensor (or a recording, to test a protocol without the sensor).
+[sensor]
+source = "os-122542000054.local"  # sensor hostname or IP address, or a .osf/.pcap recording
+auto_udp_dest = false  # let the SDK set the UDP destination of the sensor (the lab PC needs the stored one)
+compress = false  # compressed frame files: half the size, but about 0.1 s of CPU per frame, so the writer falls behind and finishes after the capture
+
+# Empty room, countdown, recording.
+[timing]
+background_seconds = 10.0  # empty-room recording at the start (nobody in the room) [s]
+delay = 10.0  # countdown to walk to the floor mark and take the A-pose [s]
+duration = "none"  # record this long; not set: until ENTER (or the safety stop) [s]
+max_seconds = 1800.0  # safety stop of a recording that waits for ENTER [s]
+expected_mode = "1024x20"  # warn if the sensor runs another lidar mode ('' = no check)

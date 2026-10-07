@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.2.0 (2026-10-06)
+
+### New: moving people
+
+Animated meshes of a person moving around the LiDAR, for Sionna RT, and the
+person's body tracks. The motion comes only from the LiDAR frames; the body
+model fills what one sensor cannot see. Workflow, recording protocol,
+algorithms, accuracy and limits: [docs/motion.md](docs/motion.md).
+
+- `capture-motion`: empty room, countdown, then the person moving (until
+  ENTER or `--duration`); warns when the sensor is not in the 1024 x 20 mode.
+- `segment-motion`: the person in every frame (points, pixels, the time of
+  every point, a silhouette crop) against the empty room; pixels without a
+  return where the empty room always returns count as the person (dark
+  fabric).
+- `avatar`: the SMPL-X body model fitted to the person's turntable scan
+  (shape, pose), plus the scan's detail as displacements on a subdivided
+  surface.
+- `track`: the avatar fitted to every frame, coarse to fine (points to the
+  visible surface, silhouette and free space, joint limits, floor,
+  continuity), with a search from other starts for legs and arms when points
+  remain unexplained (arms swung overhead, knees folding at a landing); then
+  the whole sequence refined (smooth joint motion by a penalty on the jerk,
+  standing feet that do not slide, the time of every point and pixel); parts
+  the sensor hardly sees are kept smooth; frames that need a look are
+  flagged.
+- `review-motion`: the tracked body over the LiDAR points, as a GIF and PNG
+  pictures, for human checks.
+- `export-motion`: one PLY mesh per time step at any rate, per-vertex
+  velocities (derivative of the smooth motion), per-part velocities, the
+  joints as CSV (body tracks); optionally one mesh per body part.
+- `simulate-motion`, `evaluate-motion`, `bench-motion`, `make-test-body`:
+  synthetic recordings with truth (rolling shutter, beam footprint, mixed
+  pixels, dropouts; walks and countermovement jumps from footprints and leg
+  inverse kinematics), error metrics (joints, part velocities and their
+  Doppler equivalent, accelerations, sliding feet), a test bench over
+  motions, sensor modes and distances, and a procedural test body in the
+  SMPL-X file format for tests without the SMPL-X files. On the bench, at
+  1024 x 20 and 2 m: joints within 13 mm, body-part velocities within 0.11
+  (walk) and 0.14 m/s (jump); at 2048 x 10 the jumps are three to four times
+  worse, so moving people are recorded at 1024 x 20.
+- The capture stores the pixel shift of every row in `lut.npz` (the time of
+  every pixel of a moving person).
+
+### Requirements of the new commands
+
+PyTorch (`python -m pip install torch`, the CUDA build on a PC with an NVIDIA
+GPU), Pillow for the GIF (`pip install bodyscan[motion]` installs both), and
+the SMPL-X model files: register at https://smpl-x.is.tue.mpg.de and keep the
+files out of the repository (the licence does not allow redistribution). The
+capture and `segment-motion` need neither.
+
 ## 1.1.0 (2026-10-05)
 
 ### Changed

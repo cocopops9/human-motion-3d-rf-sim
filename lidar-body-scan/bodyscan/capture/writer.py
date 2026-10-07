@@ -70,7 +70,12 @@ class RunDirectory:
         """Metadata and per-pixel geometry of the sensor (processing then needs no SDK)."""
         (self.path / "metadata.json").write_text(source.metadata_json())
         direction, offset = source.pixel_lut()
-        np.savez(self.path / "lut.npz", direction=direction, offset=offset)
+        arrays = {"direction": direction, "offset": offset}
+        try:
+            arrays["pixel_shift"] = source.pixel_shift()                  # pixel times of moving subjects
+        except AttributeError:                                            # older SDK metadata, or a test source
+            pass
+        np.savez(self.path / "lut.npz", **arrays)
 
     def put(self, kind: str, arrays: dict) -> int:
         """Queue one frame of 'background' or 'frames'; returns its index."""

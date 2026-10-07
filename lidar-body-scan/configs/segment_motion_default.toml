@@ -1,0 +1,33 @@
+# Reading the frames.
+[frames]
+min_range = 0.3  # returns closer than this are ignored [m]
+max_range = 10.0  # returns farther than this are ignored [m]
+
+# Floor detection in the empty scene (defines the floor frame: z up, z = 0 on the floor).
+[floor]
+up = [0.0, 0.0, 1.0]  # rough up direction in the sensor frame
+max_tilt_deg = 60.0  # largest angle between the floor normal and the up direction [deg]
+min_sensor_height = 0.2  # lowest accepted height of the sensor above the floor [m]
+max_sensor_height = 4.0  # highest accepted height of the sensor above the floor [m]
+ransac_threshold = 0.02  # RANSAC inlier distance of the plane search [m]
+refit_band = 0.015  # final least-squares refit on the points within this of the plane [m]
+
+# Cutting the moving person out of every frame (floor frame: z up, z = 0 on the floor).
+[segmentation]
+bg_threshold = 0.08  # a pixel is foreground if closer than the empty scene by this [m]
+bg_relative = 0.015  # ... or by this fraction of its range, whichever is larger
+edge_jump = 0.05  # mixed-pixel filter: range jump on both sides of a pixel (0 = off) [m]
+min_height = 0.01  # drop points below this height above the floor [m]
+max_height = 2.4  # drop points above this height [m]
+max_distance = 9.0  # drop points farther than this from the sensor (horizontal) [m]
+cluster_distance = 0.12  # points closer than this belong to the same cluster [m]
+min_points = 40  # smallest cluster kept
+gate = 0.9  # the person is everything within this horizontal radius of where they are predicted to be [m]
+min_person_height = 0.8  # a new person (first frame, or after being lost) stands at least this tall [m]
+lost_after = 5  # frames without the person before searching the whole scene again
+dark_pixels = true  # count pixels without return where the empty scene always returns, next to the person, as part of the silhouette (dark clothes)
+dark_reliability = 0.95  # fraction of the empty-scene frames in which such a pixel must return
+dark_reach = 3  # dark pixels count within this many pixels of a person return
+crop_rows = 6  # rows kept above and below the person in the silhouette crop
+crop_columns = 16  # columns kept on both sides of the person in the silhouette crop
+min_columns = 0.9  # drop a frame that received less than this fraction of its columns

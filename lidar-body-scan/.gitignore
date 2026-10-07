@@ -12,5 +12,10 @@ dist/
 !docs/img/*.png
 out/
 runs/
+# body model files: the SMPL-X licence forbids redistribution
+SMPLX_*
+smplx/
+*.npz
+!tests/**/*.npz
 
 !results/**/*.ply

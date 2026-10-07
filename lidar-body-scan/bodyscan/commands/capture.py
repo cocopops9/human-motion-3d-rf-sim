@@ -32,6 +32,9 @@ class CaptureCommand(ConfiguredCommand):
     def extra_log(self, config, devices) -> dict:
         return {}
 
+    def check_source(self, config, source) -> None:
+        """Checks of the opened sensor before anything is recorded (warnings only)."""
+
     def summary(self, log) -> str:
         return (f"background frames {log['background']}, frames {log['frames']}, frame_id gaps "
                 f"{len(log['frame_id_gaps'])}, frames with lost columns {len(log['low_columns_frames'])}")
@@ -53,6 +56,7 @@ class CaptureCommand(ConfiguredCommand):
         try:
             source = OusterSource(config.sensor.source, config.sensor.auto_udp_dest)
             info(f"sensor: {source.describe()}" + ("  (replaying a recording)" if not source.live else ""))
+            self.check_source(config, source)
             phases = self.phases(config, devices)              # checks the configuration before any file is made
             run_directory = RunDirectory(out, config.sensor.compress)
             run_directory.write_sensor(source)

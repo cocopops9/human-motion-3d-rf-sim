@@ -235,6 +235,10 @@ class Params(Command):
     def run(self, args):
         from bodyscan import config as cfg
         from bodyscan.capture.protocols import InPlaceCaptureConfig, TurntableCaptureConfig
+        from bodyscan.commands.motion import (AvatarCommandConfig, BenchMotion, ExportCommandConfig,
+                                              MotionCaptureConfig, SegmentMotionConfig)
+        from bodyscan.dynamic.bench import SimulateMotionConfig
+        from bodyscan.dynamic.track import TrackPipelineConfig
         from bodyscan.pipelines.detect import DetectConfig
         from bodyscan.pipelines.inplace import InPlaceConfig
         from bodyscan.pipelines.mesh import MeshConfig
@@ -251,7 +255,14 @@ class Params(Command):
                                     ("bodyscan smooth", SmoothMeshConfig),
                                     ("bodyscan detect", DetectConfig),
                                     ("bodyscan capture-turntable", TurntableCaptureConfig),
-                                    ("bodyscan capture-inplace", InPlaceCaptureConfig)):
+                                    ("bodyscan capture-inplace", InPlaceCaptureConfig),
+                                    ("bodyscan capture-motion", MotionCaptureConfig),
+                                    ("bodyscan segment-motion", SegmentMotionConfig),
+                                    ("bodyscan avatar", AvatarCommandConfig),
+                                    ("bodyscan track", TrackPipelineConfig),
+                                    ("bodyscan export-motion", ExportCommandConfig),
+                                    ("bodyscan simulate-motion", SimulateMotionConfig),
+                                    ("bodyscan bench-motion", BenchMotion().config_class)):
             parts.append(cfg.to_markdown(config_class, title))
         text = "\n".join(parts) + "\n"
         if args.out:

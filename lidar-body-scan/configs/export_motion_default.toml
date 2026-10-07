@@ -1,0 +1,11 @@
+# Writing the animated mesh.
+[export]
+rate = 120.0  # time steps per second of the export [Hz]
+start = "none"  # first time, seconds from the start of the motion (not set: the start) [s]
+stop = "none"  # last time, seconds from the start of the motion (not set: the end) [s]
+level = "none"  # subdivision level of the mesh (not set: the avatar's, with its detail)
+ply = true  # write one PLY mesh per time step
+velocities = true  # write the per-vertex velocity of every step
+positions = false  # also write the vertices of every step as .npy (a third of the PLY size)
+split_parts = false  # also write one mesh per body part per step
+max_steps = 100000  # refuse to write more steps than this (disk safety)

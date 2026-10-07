@@ -1,4 +1,8 @@
-"""bodyscan: LiDAR scanning of people on a turntable, from capture to a mesh for ray tracing.
+"""bodyscan: LiDAR scanning of people, from capture to meshes for ray tracing.
+
+Standing people on a turntable (or turning in place) give one closed mesh;
+people moving around the sensor give an animated mesh, from their body model
+fitted to every frame.
 
 Layers (each one only uses the layers above it):
 
@@ -12,10 +16,12 @@ Layers (each one only uses the layers above it):
     detection      rotating objects and people in a sequence of frames
     capture        recording with the Ouster sensor (optional dependency: ouster-sdk)
     pipelines      the steps above assembled for one setup (turntable, turning in place, meshing)
+    body           the body model (SMPL-X format): skeleton, rotations, skinning (needs PyTorch)
+    dynamic        moving people: segmentation, avatar, tracking, export, simulation, evaluation
     commands       the command-line interface (python -m bodyscan ...)
 
 Every tunable parameter is declared once in a configuration section (see
 bodyscan.config) together with its help text and the effect of changing it.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

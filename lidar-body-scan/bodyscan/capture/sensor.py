@@ -74,6 +74,16 @@ class OusterSource:
         offset = core.destagger(self.info, at_1m) - direction
         return direction.astype(np.float32), offset.astype(np.float32)
 
+    def pixel_shift(self) -> np.ndarray:
+        """Per-row shift between measurement columns and destaggered image
+        columns: pixel (r, c) of a destaggered image was measured at column
+        (c - shift[r]) mod W (checked against core.destagger)."""
+        return np.asarray(self.info.format.pixel_shift_by_row, dtype=np.int64)
+
+    def lidar_mode(self) -> str:
+        """The mode as columns x rate, e.g. '1024x20' (older SDKs print 'LidarMode.MODE_1024x20')."""
+        return str(self.info.config.lidar_mode).split(".")[-1].replace("MODE_", "")
+
     def scans(self):
         """Single scans: depending on the SDK version a source yields one scan,
         a list with one scan per sensor, or a FrameSet; one sensor here."""

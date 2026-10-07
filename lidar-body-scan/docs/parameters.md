@@ -515,3 +515,220 @@ The person turns on the spot by steps.
 | `--duration` | `140.0` s | capture length (two turns at 20 to 25 deg per step) |  |
 | `--cue-every` | `4.0` s | a beep every this many seconds: turn by one step (20 to 30 deg), then hold still (0 = no cues) |  |
 
+## bodyscan capture-motion
+
+### [sensor]
+
+The sensor (or a recording, to test a protocol without the sensor).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--source` | `os-122542000054.local` | sensor hostname or IP address, or a .osf/.pcap recording |  |
+| `--auto-udp-dest` | `False` | let the SDK set the UDP destination of the sensor (the lab PC needs the stored one) |  |
+| `--compress` | `False` | compressed frame files: half the size, but about 0.1 s of CPU per frame, so the writer falls behind and finishes after the capture |  |
+
+### [timing]
+
+Empty room, countdown, recording.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--background-seconds` | `10.0` s | empty-room recording at the start (nobody in the room) |  |
+| `--delay` | `10.0` s | countdown to walk to the floor mark and take the A-pose |  |
+| `--duration` | not set | record this long; not set: until ENTER (or the safety stop) |  |
+| `--max-seconds` | `1800.0` s | safety stop of a recording that waits for ENTER |  |
+| `--expected-mode` | `1024x20` | warn if the sensor runs another lidar mode ('' = no check) |  |
+
+## bodyscan segment-motion
+
+### [frames]
+
+Reading the frames.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--min-range` | `0.3` m | returns closer than this are ignored |  |
+| `--max-range` | `10.0` m | returns farther than this are ignored |  |
+
+### [floor]
+
+Floor detection in the empty scene (defines the floor frame: z up, z = 0 on the floor).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--up` | `(0.0, 0.0, 1.0)` | rough up direction in the sensor frame | (0, 0, 1) for an upright sensor; for a sensor mounted on its side give the sensor axis that points up, e.g. (0, 1, 0) |
+| `--max-tilt-deg` | `60.0` deg | largest angle between the floor normal and the up direction | larger: accepts a more tilted sensor, but also walls when close to 90 |
+| `--min-sensor-height` | `0.2` m | lowest accepted height of the sensor above the floor |  |
+| `--max-sensor-height` | `4.0` m | highest accepted height of the sensor above the floor | excludes the ceiling and far planes |
+| `--ransac-threshold` | `0.02` m | RANSAC inlier distance of the plane search |  |
+| `--refit-band` | `0.015` m | final least-squares refit on the points within this of the plane |  |
+
+### [segmentation]
+
+Cutting the moving person out of every frame (floor frame: z up, z = 0 on the floor).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--bg-threshold` | `0.08` m | a pixel is foreground if closer than the empty scene by this | smaller keeps the soles closer to the floor but lets floor noise in |
+| `--bg-relative` | `0.015` | ... or by this fraction of its range, whichever is larger |  |
+| `--edge-jump` | `0.05` m | mixed-pixel filter: range jump on both sides of a pixel (0 = off) |  |
+| `--min-height` | `0.01` m | drop points below this height above the floor |  |
+| `--max-height` | `2.4` m | drop points above this height |  |
+| `--max-distance` | `9.0` m | drop points farther than this from the sensor (horizontal) |  |
+| `--cluster-distance` | `0.12` m | points closer than this belong to the same cluster |  |
+| `--min-points` | `40` | smallest cluster kept |  |
+| `--gate` | `0.9` m | the person is everything within this horizontal radius of where they are predicted to be | must cover outstretched arms; larger may take in furniture next to the person |
+| `--min-person-height` | `0.8` m | a new person (first frame, or after being lost) stands at least this tall |  |
+| `--lost-after` | `5` | frames without the person before searching the whole scene again |  |
+| `--dark-pixels` | `True` | count pixels without return where the empty scene always returns, next to the person, as part of the silhouette (dark clothes) |  |
+| `--dark-reliability` | `0.95` | fraction of the empty-scene frames in which such a pixel must return |  |
+| `--dark-reach` | `3` | dark pixels count within this many pixels of a person return |  |
+| `--crop-rows` | `6` | rows kept above and below the person in the silhouette crop |  |
+| `--crop-columns` | `16` | columns kept on both sides of the person in the silhouette crop |  |
+| `--min-columns` | `0.9` | drop a frame that received less than this fraction of its columns |  |
+
+## bodyscan avatar
+
+### [avatar]
+
+Fitting the body model to the static scan of a person (turntable).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--num-betas` | `10` | shape coefficients fitted (SMPL-X has up to 300) | more follow the scan more closely; the detail stage adds the rest |
+| `--level` | `2` | subdivisions of the detailed surface (0: model resolution, about 10,000 vertices for SMPL-X; each level multiplies the triangles by 4: level 2 gives about 3.6 mm edges) |  |
+| `--sample-points` | `30000` | scan points used by the pose and shape fit |  |
+| `--detail-points` | `150000` | scan points used by the detail fit |  |
+| `--yaw-starts` | `4` | facing directions tried when the shoulders and feet do not tell the front |  |
+| `--rounds` | `8` | correspondence rounds of the pose and shape fit |  |
+| `--iterations` | `25` | L-BFGS iterations per round |  |
+| `--robust-scale` | `0.02` m | distance at which a correspondence stops counting fully (Geman-McClure) |  |
+| `--coverage` | `0.04` m | a model vertex is pulled to the scan only if a scan point lies within this |  |
+| `--beta-weight` | `0.001` | weight of the shape coefficients (keeps the shape plausible) |  |
+| `--pose-weight` | `0.01` | weight keeping the joint rotations near the A-pose |  |
+| `--detail-rounds` | `4` | correspondence rounds of the detail fit |  |
+| `--smoothness` | `0.5` | weight of the slope of the displacements between neighbouring vertices (larger: smoother detail, smaller: follows the scan noise) |  |
+| `--max-displacement` | `0.05` m | displacements are limited to this |  |
+| `--keep-hands` | `True` | keep the model's hands and fingers (the LiDAR does not resolve fingers) |  |
+| `--device` | `auto` | PyTorch device: auto (CUDA when available), cpu, cuda |  |
+
+## bodyscan track
+
+### [tracking]
+
+Fitting the avatar to every frame (stage 1, frame by frame).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--level` | `0` | subdivision level of the avatar used for tracking (0: model resolution, the fastest; the export can use a finer level) |  |
+| `--device` | `auto` | PyTorch device: auto (CUDA when available), cpu, cuda |  |
+| `--robust-scale` | `0.03` m | distance at which a point stops counting fully (Geman-McClure) | larger: smoother but more biased by stray points; smaller: needs a good start |
+| `--point-to-point` | `0.1` | weight of the point-to-point distance next to the point-to-plane one |  |
+| `--max-correspondence` | `0.25` m | points farther than this from the visible body are ignored |  |
+| `--visibility-tolerance` | `0.03` m | a vertex behind another by more than this is hidden |  |
+| `--silhouette-weight` | `2.0` | weight of the silhouette and free-space term | larger keeps hidden limbs out of the free space more firmly |
+| `--silhouette-scale` | `0.06` m | robust scale of the silhouette distances |  |
+| `--free-space-margin` | `0.06` m | a vertex counts as in free space when the sensor saw this much beyond it |  |
+| `--limit-weight` | `5.0` | weight of the anatomical joint limits |  |
+| `--twist-weight` | `0.05` | weight pulling the twist of the spine and the rotation of the hips about the legs towards zero [per rad^2]: the pelvis can turn and the trunk and legs turn back by as much, which the points hardly tell apart |  |
+| `--floor-weight` | `5.0` | weight of the no-foot-below-the-floor term |  |
+| `--pose-continuity` | `0.05` | weight of the joint rotations staying near the prediction (constant velocity) [per rad^2] | larger: steadier hidden limbs, slower to follow fast motion |
+| `--root-continuity` | `0.02` | weight of the root staying near the prediction |  |
+| `--hidden-continuity` | `10.0` | the continuity weight of a joint whose body part is less than 30 % visible is multiplied by up to 1 + this (fully hidden): a hidden limb keeps its motion instead of jumping where a few points pull it |  |
+| `--tracking-rounds` | `3` | correspondence rounds per frame |  |
+| `--tracking-iterations` | `12` | L-BFGS iterations per round |  |
+| `--coarse-scale` | `4.0` | robust scale of the first round, as a multiple of robust_scale (halved every round down to robust_scale) | larger: catches faster limbs, but stray points pull more in the first round |
+| `--init-yaws` | `8` | facing directions tried on the first frame and after the person is lost |  |
+| `--lost-residual` | `0.05` m | median point distance above which a frame is fitted again from several starts |  |
+| `--recover-distance` | `0.06` m | a point farther than this from the visible body is unexplained |  |
+| `--recover-fraction` | `0.02` | fraction of unexplained points above which the frame is fitted again from other starts: the previous pose, legs, arms (0: never) | smaller: more searches (about 5 s per frame on a CPU) |
+
+### [refine]
+
+Whole-sequence refinement (stage 2): natural motion.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--enabled` | `True` | refine the whole sequence after the frame-by-frame fit |  |
+| `--window` | `40` | frames optimised together |  |
+| `--overlap` | `10` | frames shared with the previous window (held, for continuity) |  |
+| `--refine-rounds` | `2` | correspondence rounds per window |  |
+| `--refine-iterations` | `40` | L-BFGS iterations per round |  |
+| `--smoothness` | `jerk` | what the smoothness term penalises: the jerk (change of acceleration) or the acceleration of the joints | acceleration also pulls a jump's flight (free fall, 9.81 m/s2) flatter |
+| `--smoothness-weight` | `0.5` | weight of the smoothness term | larger: smoother motion, sharp events (landings) softened |
+| `--hidden-smoothness` | `10.0` | the smoothness weight of a joint whose body part is less than 30 % visible is multiplied by up to 1 + this (fully hidden) |  |
+| `--smoothness-scale` | `200.0` | Charbonnier scale of the smoothness term: below it smoothed like a spring, above it penalised linearly (m/s3 for jerk, m/s2 for acceleration) |  |
+| `--contact-height` | `0.035` m | a foot whose lowest vertex is below this is on the floor if also slow |  |
+| `--contact-speed` | `0.35` m/s | ... and its ankle moves slower than this |  |
+| `--skating-weight` | `2.0` | weight of the no-sliding of feet on the floor |  |
+| `--rolling-shutter` | `True` | compare every point with the body at the time it was measured |  |
+
+## bodyscan export-motion
+
+### [export]
+
+Writing the animated mesh.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--rate` | `120.0` Hz | time steps per second of the export | higher: more files; velocities are exact at any rate |
+| `--start` | not set | first time, seconds from the start of the motion (not set: the start) |  |
+| `--stop` | not set | last time, seconds from the start of the motion (not set: the end) |  |
+| `--level` | not set | subdivision level of the mesh (not set: the avatar's, with its detail) |  |
+| `--ply` | `True` | write one PLY mesh per time step |  |
+| `--velocities` | `True` | write the per-vertex velocity of every step |  |
+| `--positions` | `False` | also write the vertices of every step as .npy (a third of the PLY size) |  |
+| `--split-parts` | `False` | also write one mesh per body part per step |  |
+| `--max-steps` | `100000` | refuse to write more steps than this (disk safety) |  |
+
+## bodyscan simulate-motion
+
+### [scenario]
+
+The simulated take.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--motion` | `walk` | walk, walk-circle, jump, jump-forward, stand, or an AMASS / PoseSequence .npz |  |
+| `--distance` | `2.5` m | distance of the motion from the LiDAR (walk: of the straight pass; circle: radius) |  |
+| `--azimuth` | `90.0` deg | direction of the motion seen from the LiDAR (0: the sensor's x axis, where the synthetic frames start and end) |  |
+| `--duration` | `5.0` s | walking time (walks) |  |
+| `--speed` | `1.15` m/s | walking speed |  |
+| `--jumps` | `2` | number of jumps |  |
+| `--jump-height` | `0.25` m | rise of the pelvis above its take-off height in a jump |  |
+| `--betas` | `[]` | shape coefficients of the simulated person (empty: the average body) |  |
+| `--seed` | `0` | random seed of the sensor noise |  |
+| `--scan` | `True` | also write scan.ply: a simulated turntable scan of the body (input of 'avatar') |  |
+
+### [sensor]
+
+The simulated LiDAR (an Ouster OS0-128 by default).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--mode` | `1024x20` | columns x frames per second |  |
+| `--height` | `1.0` m | lens height above the floor |  |
+| `--noise` | `0.008` m | range noise (one sigma) |  |
+| `--body-dropout` | `0.02` | probability that a beam on the body returns nothing |  |
+| `--grazing-dropout` | `0.3` | additional dropout on the body at grazing incidence (x (1 - cos)^2) |  |
+| `--footprint-rays` | `4` | sub-rays per beam (1: no beam footprint, no mixed pixels) |  |
+| `--mixed-fraction` | `0.3` | probability of a mixed range at an edge between person and background |  |
+| `--background-frames` | `10` | frames of the empty room |  |
+
+## bodyscan bench-motion
+
+### [bench]
+
+The grid of the test bench.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--motions` | `['walk', 'jump']` | motions (see simulate-motion) |  |
+| `--modes` | `['1024x20', '2048x10']` | sensor modes |  |
+| `--distances` | `[2.0, 3.5]` m | distances from the LiDAR |  |
+| `--duration` | `4.0` s | walking time of the walks |  |
+| `--jumps` | `2` | jumps per take |  |
+| `--avatar-from-scan` | `False` | fit the avatar to a simulated turntable scan (adds the avatar error) |  |
+| `--refine` | `True` | refine the whole sequence (stage 2) when tracking |  |
+| `--reuse` | `False` | keep the result of takes already tracked and evaluated (to resume a bench that stopped; the simulated recordings are always reused) |  |
+

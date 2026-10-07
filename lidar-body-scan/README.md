@@ -4,13 +4,15 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.1.0-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.2.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
 ![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)
 ![target](https://img.shields.io/badge/for-Sionna%20RT-b7a2f7?style=flat-square)
+![motion](https://img.shields.io/badge/moving%20people-PyTorch%20%2B%20SMPL--X-ee4c2c?style=flat-square)
 
 **[Idea](#the-idea-in-one-picture)** ·
+**[Moving people](#moving-people)** ·
 **[Features](#features)** ·
 **[Gallery](#gallery)** ·
 **[Install](#installation)** ·
@@ -40,6 +42,18 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
 
 <p align="center"><sub>The smoothed mesh of <code>pepito</code>. An interactive 3D version is in <a href="docs/models/person_pepito_smooth_preview.stl"><code>docs/models/person_pepito_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
 
+## Moving people
+
+Version 1.2 animates the person. The turntable scan gives the person's body (the SMPL-X body model fitted to the scan, with the scan's detail); then the person walks or jumps around the same LiDAR, and the body is fitted to every frame. The result is an **animated mesh**: one mesh per time step at any rate, the same triangles throughout, the velocity of every vertex, and the person's joints over time, ready for a micro-Doppler simulation in Sionna RT.
+
+<p align="center">
+  <img src="docs/img/motion_walk_synthetic.png" alt="A tracked walk, seen from the LiDAR and from the far side" width="100%">
+</p>
+
+<p align="center"><sub>Synthetic data: the procedural test body walking 2 m from a simulated OS0-128 (1024 x 20), tracked by <code>bodyscan track</code>. Green dots are the LiDAR points of each frame, on the tracked body. Top: seen from the LiDAR. Bottom: the same instants from the far side, where the sensor saw almost nothing; that side follows from the body model and the motion rules, not from data.</sub></p>
+
+The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), joint limits, the floor, feet that do not slide and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
+
 ---
 
 ## Features
@@ -52,6 +66,8 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
 | **Mesh** | Poisson reconstruction, a closed manifold remesh on a 4 mm grid, flat soles, and a quality report: facet normal noise, bump height against λ/8 and λ/32, distance to the cloud. No smoothing is applied here. |
 | **Smooth** | Normal filtering, then vertex update, then volume restoration, repeated for the rounds you choose. Every parameter is direct: scale, rounds, finishing rounds, normal sigma, deviation limit. `--sweep` writes one mesh per value to compare. |
 | **Detect** | Finds objects rotating about a vertical axis and objects shaped like a standing person in any recording, and gives their centres. |
+| **Moving people** | `capture-motion`, `segment-motion`, `avatar`, `track`, `review-motion`, `export-motion`: from a recording of a person walking or jumping to an animated mesh with per-vertex velocities, through a body model fitted to the person's turntable scan and to every frame. |
+| **Synthetic bench** | `simulate-motion` scans a moving body with a simulated OS0-128 (rolling shutter, beam footprint, dropouts) with the exact truth; `evaluate-motion` and `bench-motion` measure joint, velocity and Doppler errors. |
 | **Reproducible** | Every run writes a JSON report with the complete configuration. Settings come from options, TOML/JSON files, or `--set section.name=value`. |
 | **Light install** | Only numpy and open3d for the processing. scipy is not used. Works with the Python that MATLAB uses, for PCs where software can only be installed through MATLAB. |
 | **Tested** | Unit and end-to-end tests on synthetic recordings, and a `simulate` command that makes them without the sensor. |
@@ -118,7 +134,7 @@ python -c "import open3d as o3d; o3d.visualization.draw_geometries([o3d.io.read_
 
 ## Installation
 
-Only numpy and open3d are needed for the processing; matplotlib (plots) is optional; ouster-sdk is needed only to record (and pyserial only when this PC drives the motor). scipy is not used.
+Only numpy and open3d are needed for the processing; matplotlib (plots) is optional; ouster-sdk is needed only to record (and pyserial only when this PC drives the motor). scipy is not used. The commands for moving people also need PyTorch (`python -m pip install torch`; the CUDA build on a PC with an NVIDIA GPU), Pillow for the review GIF, and the SMPL-X model files (register at https://smpl-x.is.tue.mpg.de; the licence does not allow putting them in the repository).
 
 On a PC where new software can only be installed through MATLAB, use the Python that MATLAB uses (`pyenv` in MATLAB shows it) and install the packages for it from MATLAB's Add-On Explorer or with that interpreter. Nothing has to be installed for the package itself: clone the repository and run the commands from its folder.
 
@@ -248,6 +264,28 @@ python -m bodyscan smooth C:\lidar\person1_mesh.ply --out C:\lidar\person1_smoot
 
 At every beep the person turns by a small step (20 to 30 degrees) and holds still. The person is found in the frames automatically (`--center X Y` or `--crop-min/--crop-max` impose the region).
 
+### Workflow for moving people
+
+```
+python -m bodyscan avatar C:\lidar\person_tt17.ply --model C:\smplx\SMPLX_NEUTRAL.npz --out C:\lidar\s01_avatar
+python -m bodyscan capture-motion C:\lidar\s01_walk01 --duration 60
+python -m bodyscan segment-motion C:\lidar\s01_walk01 --out C:\lidar\s01_walk01_seg
+python -m bodyscan track C:\lidar\s01_walk01_seg --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_motion
+python -m bodyscan review-motion C:\lidar\s01_walk01_motion.npz --segments C:\lidar\s01_walk01_seg --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_review
+python -m bodyscan export-motion C:\lidar\s01_walk01_motion.npz --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_meshes --rate 200
+```
+
+The take starts with 10 s of empty room, then the person stands 3 s in the A-pose on a floor mark, moves, and ends with 3 s in the A-pose. Use the sensor in 1024 x 20 mode. Without the sensor or the SMPL-X files, the whole chain runs on synthetic data:
+
+```
+python -m bodyscan make-test-body C:\lidar\testbody.npz
+python -m bodyscan simulate-motion C:\lidar\sim_walk --model C:\lidar\testbody.npz --motion walk --distance 2.5
+python -m bodyscan avatar C:\lidar\sim_walk\scan.ply --model C:\lidar\testbody.npz --out C:\lidar\sim_avatar
+python -m bodyscan segment-motion C:\lidar\sim_walk --out C:\lidar\sim_walk_seg
+python -m bodyscan track C:\lidar\sim_walk_seg --avatar C:\lidar\sim_avatar.npz --out C:\lidar\sim_walk_motion
+python -m bodyscan evaluate-motion C:\lidar\sim_walk_motion.npz --truth C:\lidar\sim_walk --avatar C:\lidar\sim_avatar.npz
+```
+
 ### Detection
 
 ```
@@ -267,6 +305,10 @@ Input: a capture directory, or a folder of point clouds (one `.ply`, `.pcd`, `.x
 | `quality` | the quality report of any mesh |
 | `params` | the parameter reference (`docs/parameters.md`) |
 | `simulate` | synthetic recordings (turntable, in place, detection scene) |
+| `simulate-motion` | a synthetic recording of a moving body, with its truth |
+| `evaluate-motion` | the errors of a tracked motion against that truth |
+| `bench-motion` | simulate, track and evaluate over motions, sensor modes and distances |
+| `make-test-body` | a procedural body in the SMPL-X file format, for tests without SMPL-X |
 
 ### Configuration
 
@@ -285,6 +327,7 @@ python -m bodyscan fuse C:\lidar\tt17 --config my_turntable.toml --out person_tt
 | `mesh_budget_140k.toml` | fewer triangles |
 | `mesh_generic.toml` | any object, surface left open |
 | `smooth_previous_mesh.toml` | the smoothing that `mesh` applied by itself up to version 1.0, to reproduce older meshes |
+| `track_default.toml` and the other motion `*_default.toml` | the defaults of the commands for moving people |
 | `turntable_fingers.toml` | experimental: fusion that keeps narrower gaps |
 
 The JSON report of every run contains its complete configuration, so a result can always be reproduced.
@@ -292,9 +335,11 @@ The JSON report of every run contains its complete configuration, so a result ca
 ### Tests
 
 ```
-python -m unittest discover -s tests -t .                         about 1 minute
-set BODYSCAN_SLOW_TESTS=1 && python -m unittest discover -s tests -t .   with the fusion runs, about 10 minutes
+python -m unittest discover -s tests -t .                         about 2 minutes
+set BODYSCAN_SLOW_TESTS=1 && python -m unittest discover -s tests -t .   with the fusion, avatar and tracking runs
 ```
+
+The tests of moving people need PyTorch and are skipped without it.
 
 ---
 
@@ -302,6 +347,7 @@ set BODYSCAN_SLOW_TESTS=1 && python -m unittest discover -s tests -t .   with th
 
 | Document | Read it for |
 |---|---|
+| [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |
 | [docs/parameters.md](docs/parameters.md) | every parameter of every command (generated from the code) |
@@ -330,6 +376,9 @@ set BODYSCAN_SLOW_TESTS=1 && python -m unittest discover -s tests -t .   with th
 | tt16 mesh, then `smooth` (defaults) | facet noise median 0.6 deg (p90 2.0), bump height rms 0.31 mm, surface moved by 1.0 mm median (p99 5.4 mm) |
 | tt11 (pepito) mesh, then `smooth` level 4 | facet noise median 0.71 deg (p90 1.93), bump height rms 0.031 mm, volume kept, surface moved by 0.57 mm median (p99 3.6 mm) |
 | detection on tt13, tt14, tt15 | the person only (furniture, boxes and stands rejected) |
+| moving person, synthetic walk at 2 m, 1024 x 20 (test body, avatar fitted to a simulated scan) | joints 13 mm mean (observed parts 9 mm, the far arm 42 mm), body-part velocities 0.11 m/s rms (43 Hz at 60 GHz), standing feet 6 mm/s |
+| moving person, synthetic jumps at 2 m, 1024 x 20 | joints 12 mm mean, body-part velocities 0.14 m/s rms (57 Hz at 60 GHz) |
+| the same jumps at 2048 x 10 | joints 36 mm, velocities 0.62 m/s: record moving people at 1024 x 20 ([docs/motion.md](docs/motion.md), section 6) |
 
 <br>
 

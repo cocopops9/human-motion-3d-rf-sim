@@ -1,0 +1,40 @@
+# Fitting the avatar to every frame (stage 1, frame by frame).
+[tracking]
+level = 0  # subdivision level of the avatar used for tracking (0: model resolution, the fastest; the export can use a finer level)
+device = "auto"  # PyTorch device: auto (CUDA when available), cpu, cuda
+robust_scale = 0.03  # distance at which a point stops counting fully (Geman-McClure) [m]
+point_to_point = 0.1  # weight of the point-to-point distance next to the point-to-plane one
+max_correspondence = 0.25  # points farther than this from the visible body are ignored [m]
+visibility_tolerance = 0.03  # a vertex behind another by more than this is hidden [m]
+silhouette_weight = 2.0  # weight of the silhouette and free-space term
+silhouette_scale = 0.06  # robust scale of the silhouette distances [m]
+free_space_margin = 0.06  # a vertex counts as in free space when the sensor saw this much beyond it [m]
+limit_weight = 5.0  # weight of the anatomical joint limits
+twist_weight = 0.05  # weight pulling the twist of the spine and the rotation of the hips about the legs towards zero [per rad^2]: the pelvis can turn and the trunk and legs turn back by as much, which the points hardly tell apart
+floor_weight = 5.0  # weight of the no-foot-below-the-floor term
+pose_continuity = 0.05  # weight of the joint rotations staying near the prediction (constant velocity) [per rad^2]
+root_continuity = 0.02  # weight of the root staying near the prediction
+hidden_continuity = 10.0  # the continuity weight of a joint whose body part is less than 30 % visible is multiplied by up to 1 + this (fully hidden): a hidden limb keeps its motion instead of jumping where a few points pull it
+rounds = 3  # correspondence rounds per frame
+iterations = 12  # L-BFGS iterations per round
+coarse_scale = 4.0  # robust scale of the first round, as a multiple of robust_scale (halved every round down to robust_scale)
+init_yaws = 8  # facing directions tried on the first frame and after the person is lost
+lost_residual = 0.05  # median point distance above which a frame is fitted again from several starts [m]
+recover_distance = 0.06  # a point farther than this from the visible body is unexplained [m]
+recover_fraction = 0.02  # fraction of unexplained points above which the frame is fitted again from other starts: the previous pose, legs, arms (0: never)
+
+# Whole-sequence refinement (stage 2): natural motion.
+[refine]
+enabled = true  # refine the whole sequence after the frame-by-frame fit
+window = 40  # frames optimised together
+overlap = 10  # frames shared with the previous window (held, for continuity)
+rounds = 2  # correspondence rounds per window
+iterations = 40  # L-BFGS iterations per round
+smoothness = "jerk"  # what the smoothness term penalises: the jerk (change of acceleration) or the acceleration of the joints
+smoothness_weight = 0.5  # weight of the smoothness term
+hidden_smoothness = 10.0  # the smoothness weight of a joint whose body part is less than 30 % visible is multiplied by up to 1 + this (fully hidden)
+smoothness_scale = 200.0  # Charbonnier scale of the smoothness term: below it smoothed like a spring, above it penalised linearly (m/s3 for jerk, m/s2 for acceleration)
+contact_height = 0.035  # a foot whose lowest vertex is below this is on the floor if also slow [m]
+contact_speed = 0.35  # ... and its ankle moves slower than this [m/s]
+skating_weight = 2.0  # weight of the no-sliding of feet on the floor
+rolling_shutter = true  # compare every point with the body at the time it was measured
