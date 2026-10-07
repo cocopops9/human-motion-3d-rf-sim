@@ -66,7 +66,7 @@ The person stands in an A-pose, palms forward, on a motorized platform about 1.6
   <img src="docs/img/turntable_fusion.gif" alt="Left: raw frames of the person turning on the platform. Right: the views accumulating into one cloud" width="100%">
 </p>
 
-<p align="center"><sub>Left: raw frames of run tt11 as recorded, the person coloured by the platform angle (dial). Right: the views of the same run, each turned back by its angle, accumulating in the body frame with the same colours; at the end all 378 views (3.7 laps) coloured by height.</sub></p>
+<p align="center"><sub>Left: raw frames of the recording behind <code>pepito</code> (folder <code>tt9</code>, fused as <code>person_tt11</code>) as recorded, the person coloured by the platform angle (dial). Right: the views of the same run, each turned back by its angle, accumulating in the body frame with the same colours; at the end all 378 views (3.7 laps) coloured by height.</sub></p>
 
 ### 3 · Mesh and 4 · Smooth
 
