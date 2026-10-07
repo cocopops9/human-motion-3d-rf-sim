@@ -12,6 +12,7 @@
 ![motion](https://img.shields.io/badge/moving%20people-PyTorch%20%2B%20SMPL--X-ee4c2c?style=flat-square)
 
 **[Tour](#the-lab-through-the-lidar)** ·
+**[Story](#from-the-lab-to-the-turntable)** ·
 **[Pipeline](#the-pipeline-step-by-step)** ·
 **[Moving people](#moving-people)** ·
 **[Features](#features)** ·
@@ -36,13 +37,23 @@ An Ouster OS0-128 spins 128 laser beams ten times per second and returns, for ev
 
 <p align="center"><sub>Real frame (run <code>person2</code>). Top: the 3D points, coloured by height and brightened by reflectivity, with the ceiling and the walls near the camera cut away; the orange dot is the sensor on its tripod. Bottom: the same frame as the sensor stores it, one row per beam and one column per azimuth. The person in amber is what differs from a recording of the empty room, which is also how the package finds people.</sub></p>
 
+### From the lab to the turntable
+
+The same lab during a real turntable scan (run tt9, the scan `pepito`): the empty room, Giuseppe walking from the PC to the platform, the camera flying to the platform, one lap of the platform, and the views fused into one cloud.
+
+<p align="center">
+  <img src="docs/img/lab_to_turntable.gif" alt="The lab, the person walking to the platform, the flight to the platform, the platform turning, and the views fused into one cloud" width="100%">
+</p>
+
+<p align="center"><sub>All real frames of one recording, drawn in the frame of the platform. The walk is the end of the empty-room phase (t = 3.8 to 5.9 s); the countdown during which he steps onto the platform (6 to 21 s) is not recorded, so the animation cuts there. From t = 21 s the platform turns at about 4°/s; the animation shows about one lap (frames 16 to 1071 of 3600) and then all 378 views of the 3.7 laps, each turned back by its platform angle.</sub></p>
+
 ### Explore it in 3D
 
 <p align="center">
   <a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/viewer/index.html"><img src="docs/img/viewer_preview.png" alt="Interactive 3D tour: the lab, the fused views, the raw and smoothed meshes" width="100%"></a>
 </p>
 
-<p align="center"><b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/viewer/index.html">Open the interactive tour</a></b> · orbit the lab, play the turntable recording, fuse the 378 views one by one, and compare the raw and the smoothed mesh.<br><sub>A single self-contained page (<a href="docs/viewer/index.html"><code>docs/viewer/index.html</code></a>, about 9 MB, three.js). Locally: download it and open it in a browser (three.js is loaded from a CDN, so an internet connection is needed).</sub></p>
+<p align="center"><b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/viewer/index.html">Open the interactive tour</a></b> · it plays the whole story by itself (lab, walk, flight to the platform, one lap, fusion, mesh, smoothing), and every step can then be explored by hand: orbit the lab, scrub the turntable frames, fuse the 378 views one by one, compare the raw and the smoothed mesh.<br><sub>A single self-contained page (<a href="docs/viewer/index.html"><code>docs/viewer/index.html</code></a>, about 10 MB, three.js). Locally: download it and open it in a browser (three.js is loaded from a CDN, so an internet connection is needed).</sub></p>
 
 ---
 

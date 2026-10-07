@@ -2,6 +2,12 @@
 
 ## Documentation (2026-10-07)
 
+- README: `docs/img/lab_to_turntable.gif`, one recording from the empty lab
+  to the fused cloud (run tt9: the person walking from the PC, the flight to
+  the platform, one lap, the fusion). The interactive tour now starts with the
+  same story, with animated camera flights between the steps, and uses the
+  lab of run tt9.
+
 - README: a visual tour from a real lab frame (`docs/img/lab_scan.gif`: the
   beam sweep and the same frame as a 128 x 2048 image), the static pipeline
   step by step (`pipeline_overview.png`, `turntable_fusion.gif` from the raw
