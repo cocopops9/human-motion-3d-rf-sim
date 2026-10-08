@@ -1,5 +1,24 @@
 # Changelog
 
+## Documentation (2026-10-08, third pass)
+
+- Algorithm Lab reorganised in the order the commands run, eight chapters:
+  1 place the sensor (`check-view`), 2 find the object (foreground, the
+  tests: rotation, people, the cascade step by step), 3 isolate it in every
+  frame, 4 platform angle, 5 fuse, 6 Poisson, 7 watertight, 8 smooth. A
+  pipeline map grouped by command at the top; every chapter opens with the
+  same card (question, command, code and parameters), lettered tabs, and a
+  link to the next step.
+- New chapter 1, `check-view`: the real fan of beams of the scan on the real
+  side profile of the body (head and feet in view, the verdict check-view
+  prints, as height, distance, tilt and stature change), and the smallest
+  visible gap (footprint and sample steps against a gap between two
+  surfaces, vertical and horizontal). Animations `lab_checkview.gif`,
+  `lab_gap.gif`.
+- docs/algorithms.md in the same order (new section 2, check-view; the finder
+  before the isolation), with a table mapping every step to its command,
+  section and Lab chapter; tuning.md and README follow the chapters.
+
 ## 1.3.0 (2026-10-08)
 
 ### Changed: one mechanism finds the object of interest, with no region of the room assumed

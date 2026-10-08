@@ -250,6 +250,9 @@ python -m bodyscan check-view C:\lidar\check1 --person-height 1.95
 
 It prints the sensor height and tilt, the platform distance, the heights the highest and lowest beams reach at the person, the tilt that fits head and feet, and the sample spacing and smallest visible gap at the person.
 
+<p align="center"><img src="docs/img/lab/lab_checkview.gif" alt="check-view: the fan of beams on the body as the tilt and the distance change" width="70%"></p>
+<p align="center"><sub>What <code>check-view</code> checks, on the real beams of the scan and the real profile of the body: the beams that end on the body (teal) against the beams needed for head and feet (amber), as the tilt changes and the sensor comes closer. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#sensor">▶ try it live</a></b> (also: the smallest gap between fingers the sampling resolves)</sub></p>
+
 </details>
 
 <details open>
@@ -437,7 +440,7 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 
 | Document | Read it for |
 |---|---|
-| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline and of the detector as a live simulation on real data: finding and isolating the person, frames to angles to the fused cloud, registration and motor model, fusion, Poisson, watertight remesh step by step, smoothing (with reflection lines in 3D), rotating objects and the person cascade (animated stage by stage) |
+| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every step of the static pipeline as a live simulation on real data, in the order the commands run it: 1 place the sensor (`check-view`), 2 find the object (foreground, rotation test, person cascade step by step), 3 isolate it, 4 platform angle (frames to angles to the fused cloud), 5 fuse, 6 Poisson, 7 watertight remesh, 8 smoothing (reflection lines in 3D) |
 | [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |

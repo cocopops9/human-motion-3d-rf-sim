@@ -10,15 +10,16 @@ lab recordings tt13, tt14 and tt15 for the detector.
 on slices of a real scan in the browser; each parameter below has a slider
 there:
 
-| Parameter | Live demo |
+| Parameter | Lab chapter |
 |---|---|
-| `bg_threshold`, `bg_relative`, `radius`, `margin`, `edge_jump`, `cluster_eps` | [find the person](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
-| axis error, long pairs, motor model | [platform angle](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
-| `min_views`, `support_radius`, `voxel`, `confidence_radius` | [fusion](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
-| `depth` (Poisson) | [points to surface](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
-| `watertight` (grid) | [closed mesh](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
-| `scale_mm`, `rounds`, `normal_sigma`, `finish_rounds`, `max_deviation_mm`, `keep_volume` | [smoothing](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) (step by step, reflection lines in 3D) |
-| `max_axis_spread`, `max_speed_spread`, `score_threshold` (detect) | [detection](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection) |
+| sensor height, distance, tilt, `--person-height`, `--margin` (check-view) | [1 · place the sensor](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#sensor) |
+| `bg_threshold`, `bg_relative`, `--rotation`, `--human`, `max_axis_spread`, `max_speed_spread`, `score_threshold` | [2 · find the object](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#finding) |
+| `margin`, `radius`, `edge_jump`, `cluster_eps` | [3 · isolate it](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#isolation) |
+| axis error, long pairs, motor model | [4 · platform angle](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
+| `min_views`, `support_radius`, `voxel`, `confidence_radius` | [5 · fuse the views](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
+| `depth` (Poisson) | [6 · points to surface](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
+| `watertight` (grid) | [7 · closed mesh](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
+| `scale_mm`, `rounds`, `normal_sigma`, `finish_rounds`, `max_deviation_mm`, `keep_volume` | [8 · smooth](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) (step by step, reflection lines in 3D) |
 
 The 2D slices show the trend of each parameter; the numbers in this guide
 are the measured 3D results.
