@@ -56,6 +56,38 @@ class CascadeTest(unittest.TestCase):
         self.assertFalse(self.passes(box((1.2, 0.6, 0.75), (0.0, 0.0)), (1.5, 0.0), 0))
 
 
+class RotationWithStillPartsTest(unittest.TestCase):
+    """A turntable recording: still, one lap at 6 deg/s, still again."""
+
+    @classmethod
+    def setUpClass(cls):
+        from bodyscan.detection.segmentation import Cluster
+        from bodyscan.detection.tracking import Track
+        sensor = SyntheticSensor(rows=128, columns=1024, height=1.15, noise=0.003)
+        times = np.linspace(0.0, 80.0, 36)
+        angles = np.clip(times - 10.0, 0.0, 60.0) * 6.0
+        origin = np.array([0.0, 0.0, sensor.height])
+        clusters = [Cluster(k, t, view_of(person(), (1.5, 0.3), a, sensor), origin)
+                    for k, (t, a) in enumerate(zip(times, angles))]
+        cls.track = Track(0, clusters)
+
+    def test_still_pairs_do_not_hide_the_rotation(self):
+        from bodyscan.detection.rotation import RotationAnalyzer, RotationConfig
+        result = RotationAnalyzer(RotationConfig()).analyze(self.track)
+        self.assertTrue(result.rotating, result.reason)
+        self.assertGreater(result.still_pairs, 0)
+        np.testing.assert_allclose(result.axis, (1.5, 0.3), atol=0.02)
+        self.assertAlmostEqual(abs(result.speed_deg_s), 6.0, delta=0.3)
+        self.assertAlmostEqual(result.turned_deg, 360.0, delta=45.0)
+
+    def test_a_whole_lap_can_be_required(self):
+        from bodyscan.detection.rotation import RotationAnalyzer, RotationConfig
+        self.assertTrue(RotationAnalyzer(RotationConfig(min_total_turn=320.0)).analyze(self.track).rotating)
+        result = RotationAnalyzer(RotationConfig(min_total_turn=720.0)).analyze(self.track)
+        self.assertFalse(result.rotating)
+        self.assertIn("turned", result.reason)
+
+
 class DetectPipelineTest(unittest.TestCase):
     """Synthetic scene: a person and a chair turning on two platforms, a person
     standing still, a desk, a cabinet and a stand."""
@@ -70,11 +102,12 @@ class DetectPipelineTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.folder.cleanup()
 
-    def detect(self, rotation, human):
+    def detect(self, rotation, human, near=None):
         config = DetectConfig()
+        config.select.near = near
         config.frames.max_frames = 30
-        ctx = DetectPipeline(config).run(input_dir=self.run_dir, out=self.folder.path / "det",
-                                         flags=(rotation, human))
+        config.select.rotation, config.select.human = rotation, human
+        ctx = DetectPipeline(config).run(input_dir=self.run_dir, out=self.folder.path / "det")
         return [r for r in ctx.results if r["selected"]]
 
     def test_rotating_objects_and_their_axes(self):
@@ -96,6 +129,20 @@ class DetectPipelineTest(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         np.testing.assert_allclose(selected[0]["center"], (1.2, 0.1), atol=0.02)
 
+    def test_near_a_point(self):
+        selected = self.detect(False, True, near=(-1.0, 1.0))
+        self.assertEqual(len(selected), 1)                                  # person C only
+        np.testing.assert_allclose(selected[0]["center"], (-1.0, 1.0), atol=0.08)
+
+    def test_without_tests_every_object_is_reported_with_both(self):
+        config = DetectConfig()
+        config.frames.max_frames = 30
+        ctx = DetectPipeline(config).run(input_dir=self.run_dir, out=self.folder.path / "det_all")
+        self.assertTrue(all(r["selected"] for r in ctx.results))
+        self.assertTrue(all(r["human"] is not None and r["rotation"] is not None for r in ctx.results))
+        people = sorted(tuple(np.round(r["center"], 1)) for r in ctx.results if r["human"]["passed"])
+        self.assertEqual(len(people), 2)
+
     def test_point_cloud_folder_with_empty_scene(self):
         """The same scene as one point cloud per frame (no range images), with background/ clouds."""
         from bodyscan.io import NpzRecording
@@ -108,7 +155,8 @@ class DetectPipelineTest(unittest.TestCase):
                 np.savez(folder / kind / f"{kind}_{k:05d}.npz", points=recording.points(load(k)))
         config = DetectConfig()
         config.frames.max_frames = 30
-        ctx = DetectPipeline(config).run(input_dir=folder, out=self.folder.path / "det_clouds", flags=(False, True))
+        config.select.human = True
+        ctx = DetectPipeline(config).run(input_dir=folder, out=self.folder.path / "det_clouds")
         self.assertIn("point clouds", ctx.report["segmentation"])
         centres = sorted(tuple(np.round(r["center"], 2)) for r in ctx.results if r["selected"])
         self.assertEqual(len(centres), 2)

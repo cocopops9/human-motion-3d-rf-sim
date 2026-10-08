@@ -4,7 +4,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.2.0-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.3.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
 ![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)
@@ -71,7 +71,7 @@ The person stands in an A-pose, palms forward, on a motorized platform about 1.6
 
 ### 2 · Fuse: every view goes back to the same body frame
 
-`fuse` finds the platform axis from the ring of the platform in the empty scene, estimates the platform angle for every frame, cuts the person out of the scene, turns every view back by its angle and fuses all of them into one cloud with normals and a per-point confidence.
+`fuse` finds the object turning on the platform in the frames (no position in the room is assumed), takes its rotation axis, estimates the platform angle for every frame, cuts the person out of the scene, turns every view back by its angle and fuses all of them into one cloud with normals and a per-point confidence.
 
 <p align="center">
   <img src="docs/img/turntable_fusion.gif" alt="Left: raw frames of the person turning on the platform. Right: the views accumulating into one cloud" width="100%">
@@ -125,7 +125,7 @@ The motion comes only from the LiDAR. Where one sensor cannot see (the arm on th
 |---|---|
 | **Capture** | Records a standing person on a motorized turntable, or turning in place by small steps. The motor can be driven from this PC (serial) or from another PC with the included MATLAB script. A short empty-scene recording and a countdown are part of the sequence. |
 | **View check** | `check-view` tells you, before recording, whether head and feet are inside the vertical field of view, the best sensor tilt, and the smallest gap the sensor can see at the person. |
-| **Fusion** | Finds the platform centre from its ring, estimates the platform angle for every frame, and fuses the views into one cloud with normals and a per-point confidence. |
+| **Fusion** | Finds the object of interest in the frames (foreground against the empty room, objects followed across frames, tests chosen by flags: `--rotation`, `--human`, `--near X Y`), measures its axis and region on it, estimates the platform angle for every frame, and fuses the views into one cloud with normals and a per-point confidence. |
 | **Mesh** | Poisson reconstruction, a closed manifold remesh on a 4 mm grid, flat soles, and a quality report: facet normal noise, bump height against λ/8 and λ/32, distance to the cloud. No smoothing is applied here. |
 | **Smooth** | Normal filtering, then vertex update, then volume restoration, repeated for the rounds you choose. Every parameter is direct: scale, rounds, finishing rounds, normal sigma, deviation limit. `--sweep` writes one mesh per value to compare. |
 | **Detect** | Finds objects rotating about a vertical axis and objects shaped like a standing person in any recording, and gives their centres. |
@@ -282,7 +282,7 @@ The recording starts with 3 s of empty scene (stay away from the platform), then
 python -m bodyscan fuse C:\lidar\tt17 --out C:\lidar\person_tt17
 ```
 
-Outputs: `person_tt17.ply` (cloud with normals, z = 0 at the platform top, origin on the platform axis), `person_tt17_confidence.ply` (per point: views, points and spread of the surface), `person_tt17_views.ply` (every view in its own colour), `person_tt17.json` (everything measured, and the full configuration), `person_tt17_angle.png` (platform angle against time). The platform centre is found from its ring in the empty scene, searched around the person; `--center X Y` imposes it.
+Outputs: `person_tt17.ply` (cloud with normals, z = 0 at the platform top, origin on the platform axis), `person_tt17_confidence.ply` (per point: views, points and spread of the surface), `person_tt17_views.ply` (every view in its own colour), `person_tt17.json` (everything measured, and the full configuration), `person_tt17_angle.png` (platform angle against time). The object to scan is found in the frames, with no position in the room assumed: the foreground against the empty room is cut into objects, the objects are followed across frames, and by default the one turning about a vertical axis by most of a lap is kept (`--rotation`); its axis starts the axis fit and the volume it sweeps (plus 15 cm) is the region of interest. `--human` also requires the shape of a standing person (Haar-like cascade), `--near X Y` the object closest to a point; `--center X Y` imposes the axis start, and `--center X Y --radius R` skips the search. A platform ring of radius `--ring-radius`, when found in the empty scene near the axis, refines the start (`--ring-radius 0` switches it off).
 
 </details>
 
@@ -325,7 +325,7 @@ python -m bodyscan mesh C:\lidar\person1_fused.ply --out C:\lidar\person1_mesh.p
 python -m bodyscan smooth C:\lidar\person1_mesh.ply --out C:\lidar\person1_smooth.ply
 ```
 
-At every beep the person turns by a small step (20 to 30 degrees) and holds still. The person is found in the frames automatically (`--center X Y` or `--crop-min/--crop-max` impose the region).
+At every beep the person turns by a small step (20 to 30 degrees) and holds still. The person is found in the frames by the same mechanism as `fuse`, with the person cascade by default (`--human`; `--near X Y` among several people); the region is measured on the person. `--center X Y` imposes its centre, `--crop-min/--crop-max` a crop box.
 
 ### Workflow for moving people
 
@@ -355,7 +355,10 @@ python -m bodyscan evaluate-motion C:\lidar\sim_walk_motion.npz --truth C:\lidar
 python -m bodyscan detect C:\lidar\tt17 --rotation            objects turning about a vertical axis
 python -m bodyscan detect C:\lidar\tt17 --human               objects shaped like a standing person
 python -m bodyscan detect C:\lidar\tt17 --rotation --human    rotating people
+python -m bodyscan detect C:\lidar\tt17 --human --near 1.6 0.3 the person nearest to a point
 ```
+
+The same flags choose the object scanned by `fuse` (default `--rotation`) and `fuse-inplace` (default `--human`): one mechanism (`detection.finder`), so a person found by `detect` is the person `fuse` will scan.
 
 Input: a capture directory, or a folder of point clouds (one `.ply`, `.pcd`, `.xyz` or `.npz` per frame, in the sensor frame). Output: a table on the console, `<out>.json`, and a top view `<out>_top.png`. The centre of a rotating object is its rotation axis (a few mm); the centre of a person who does not rotate is estimated from the visible surface (a few cm). Recordings with empty-scene frames are segmented against the empty scene; others are cut into objects after removing the walls, and the furniture is left to the tests.
 
@@ -420,7 +423,7 @@ bodyscan/
     motion/          platform angle against time: models, fitting, pairs, estimator
     fusion/          views, per-view corrections, surface fusion
     meshing/         reconstruction, cleanup, watertight remesh, smoothing, quality
-    detection/       segmentation, tracking, rotation test, person cascade
+    detection/       segmentation, tracking, rotation test, person cascade, selectors, object finder
     capture/         sensor access, run directory, phases, protocols, motor
     pipelines/       the steps assembled for one setup
     body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body
@@ -428,13 +431,13 @@ bodyscan/
     commands/        the command line
 ```
 
-A pipeline is a list of steps that read and write named entries of a shared context; the turntable pipeline is `LoadTurntableRecording`, `SceneFromBackground`, `LocatePlatform`, `IsolatePerson`, `MeasureAngles`, `SelectViews`, `BuildViews`, `CorrectViews`, `FuseSurface`, `WriteOutputs`. Every parameter is declared once, as a dataclass field, and from that declaration come the command-line option, the TOML key, the `--set` override and the parameter reference. Only `capture` imports the Ouster SDK and only `body` and `dynamic` import PyTorch, so the static processing needs numpy and open3d only. Details and how to add a step or a command: [docs/architecture.md](docs/architecture.md).
+A pipeline is a list of steps that read and write named entries of a shared context; the turntable pipeline is `LoadTurntableRecording`, `SceneFromBackground`, `FindTurntableSubject`, `LocatePlatform`, `IsolatePerson`, `MeasureAngles`, `SelectViews`, `BuildViews`, `CorrectViews`, `FuseSurface`, `WriteOutputs`. Every parameter is declared once, as a dataclass field, and from that declaration come the command-line option, the TOML key, the `--set` override and the parameter reference. Only `capture` imports the Ouster SDK and only `body` and `dynamic` import PyTorch, so the static processing needs numpy and open3d only. Details and how to add a step or a command: [docs/architecture.md](docs/architecture.md).
 
 ## Documentation
 
 | Document | Read it for |
 |---|---|
-| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline and of the detector as a live simulation on real data: isolating the person, registration and motor model, fusion, Poisson, watertight remesh, smoothing (with reflection lines in 3D), rotating objects and the person cascade |
+| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline and of the detector as a live simulation on real data: finding and isolating the person, frames to angles to the fused cloud, registration and motor model, fusion, Poisson, watertight remesh step by step, smoothing (with reflection lines in 3D), rotating objects and the person cascade (animated stage by stage) |
 | [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |

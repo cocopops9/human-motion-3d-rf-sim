@@ -5,8 +5,13 @@ platform axis. Steps:
 
     LoadRecording       the run directory (frames, background, capture.json)
     SceneFromBackground floor frame and background from the empty-scene frames
-    LocatePlatform      platform centre: [platform] center, or the ring of the platform
-                        searched around the person found in the frames
+    FindSubject         the object on the platform, found in the frames with no region of
+                        the room assumed: foreground objects followed across frames,
+                        selected by the tests of [select] (default: turning about a
+                        vertical axis by most of a lap; --human adds the person cascade);
+                        its rotation axis and the region it sweeps (detection.finder)
+    LocatePlatform      start of the axis fit: [platform] center if given, else the axis
+                        found, refined by the platform ring when one is found near it
     IsolatePerson       person mask in every frame, frame times on the sensor clock, usable frames
     MeasureAngles       platform angle of every frame (motion model and model-free solution)
     SelectViews         one view every view_step degrees
@@ -38,19 +43,17 @@ from bodyscan.log import Progress, info, warning
 from bodyscan.motion import (MotionConfig, PlatformMotionEstimator, Samples, chained_angles, consistent_frame_times,
                              constant_speed_fit, lap_times)
 from bodyscan.pipelines.base import Context, Pipeline, Step, StepList
-from bodyscan.pipelines.common import FrameConfig, LoadRecording, SceneFromBackground, locate_person
+from bodyscan.detection.finder import SelectConfig
+from bodyscan.pipelines.common import FindSubject, FrameConfig, LoadRecording, SceneFromBackground, SubjectConfig
 from bodyscan.plots import angle_plot
 from bodyscan.registration import solve_turns
 from bodyscan.scene import (CylinderRegion, FloorConfig, ForegroundIsolator, IsolationConfig, PlatformConfig,
                             RingPlatform, frame_complete)
 
-# Where the ring search starts when neither the centre, nor a search start, nor a
-# person is found: the platform centre of the 2026-09-30 calibration.
-CALIBRATION_2026_09_30 = (1.619, 0.280)
-
-
 @dataclass
 class TurntableConfig:
+    select: SelectConfig = section(SelectConfig, rotation=True)
+    subject: SubjectConfig = section(SubjectConfig, min_total_turn=320.0)
     frames: FrameConfig = section(FrameConfig)
     floor: FloorConfig = section(FloorConfig)
     platform: PlatformConfig = section(PlatformConfig)
@@ -77,50 +80,58 @@ class LoadTurntableRecording(LoadRecording):
         ctx.report["commanded_turn_deg"] = ctx.commanded
 
 
+class FindTurntableSubject(FindSubject):
+    """The object on the platform. With [platform] center given, the object
+    near that point; with the region radius given as well, nothing is searched."""
+
+    def near(self, ctx: Context):
+        center = ctx.config.platform.center
+        return None if center is None else np.array(center, dtype=np.float64)
+
+    def run(self, ctx: Context) -> None:
+        c = ctx.config
+        if c.platform.center is not None and c.isolation.radius is not None:
+            ctx.subject = None
+            ctx.center = np.array(c.platform.center, dtype=np.float64)
+            info(f"centre and region given: ({ctx.center[0]:.3f}, {ctx.center[1]:.3f}) m, radius "
+                 f"{c.isolation.radius:g} m")
+            return
+        super().run(ctx)
+
+
 class LocatePlatform(Step):
-    """Platform centre: [platform] center if set; else the ring of the platform in
-    the empty scene, searched around [platform] search_start, or around the
-    person found in the frames (the person stands on the platform); else the
-    person's position, refined later by the axis fit."""
+    """Start of the axis fit: [platform] center if given; else the centre of
+    the object found (its rotation axis, or its body centre), replaced by the
+    centre of the platform ring when a ring of [platform] ring_radius is found
+    within ring_search of it in the empty scene (an optional refinement:
+    without a ring, the joint axis fit of MeasureAngles still measures the
+    axis to a few mm)."""
     name = "platform"
 
     def __init__(self, detector=None):
         self.detector = detector
 
-    def search_start(self, ctx: Context) -> np.ndarray:
-        p = ctx.config.platform
-        if p.search_start is not None:
-            return np.array(p.search_start, dtype=np.float64)
-        person, frames = locate_person(ctx.source, ctx.floor, ctx.background_range)
-        if person is None:
-            warning(f"no person found in the frames; the platform ring is searched around "
-                    f"{CALIBRATION_2026_09_30} (the 2026-09-30 calibration)")
-            return np.array(CALIBRATION_2026_09_30, dtype=np.float64)
-        info(f"person found in {frames} frames at ({person[0]:.3f}, {person[1]:.3f}) m: the platform ring is "
-             "searched around it")
-        ctx.report["person_position"] = person
-        return person
-
     def run(self, ctx: Context) -> None:
         p = ctx.config.platform
-        detector = self.detector or RingPlatform(p.ring_radius, p.ring_search)
         given = p.center is not None
-        start = np.array(p.center, dtype=np.float64) if given else self.search_start(ctx)
-        ring = detector.ring(ctx.background_world, start) if given else detector.find(ctx.background_world, start)
-        center = start.copy()
+        center = np.array(p.center, dtype=np.float64) if given else np.asarray(ctx.center, dtype=np.float64)
+        ring = None
+        if p.ring_radius > 0:
+            detector = self.detector or RingPlatform(p.ring_radius, p.ring_search)
+            ring = detector.ring(ctx.background_world, center) if given else detector.find(ctx.background_world,
+                                                                                             center)
         if ring is not None:
             info(f"platform ring in this background: centre ({ring.center[0]:.3f}, {ring.center[1]:.3f}) m, "
                  f"radius {ring.radius:.3f} m, rms {1000 * ring.rms:.0f} mm, {ring.inliers} points")
-            if not given and ring.plausible:
+            offset = float(np.linalg.norm(ring.center - center))
+            if not given and ring.plausible and offset <= p.ring_search:
+                info(f"  start of the axis fit: the ring centre, {1000 * offset:.0f} mm from the object's centre")
                 center = np.asarray(ring.center, dtype=np.float64)
-                info("  centre of the person region and start of the axis fit: the ring centre "
-                     "(--center X Y to impose one)")
-            elif np.linalg.norm(ring.center - center) > 0.10:
-                warning(f"the ring is more than 10 cm from the centre used ({center[0]:.3f}, {center[1]:.3f}): "
-                        "did the platform or the sensor move?")
-        if (ring is None or not ring.plausible) and not given:
-            warning(f"platform ring not found; the axis fit starts at ({center[0]:.3f}, {center[1]:.3f}) m. If "
-                    "the fusion fails, pass --center X Y (bodyscan detect --rotation --human finds it)")
+            elif offset > 0.10:
+                warning(f"the ring is {100 * offset:.0f} cm from the centre used ({center[0]:.3f}, "
+                        f"{center[1]:.3f}): did the platform or the sensor move?")
+        elif p.ring_radius > 0:
+            info(f"no platform ring found; the axis fit starts at ({center[0]:.3f}, {center[1]:.3f}) m")
         ctx.center = center
         ctx.report["platform_ring"] = None if ring is None else {
             "center": ring.center, "radius": ring.radius, "rms_m": ring.rms, "plausible": ring.plausible}
@@ -134,7 +145,11 @@ class IsolatePerson(Step):
     def run(self, ctx: Context) -> None:
         c = ctx.config
         iso = c.isolation
-        region = CylinderRegion(ctx.center, iso.radius, iso.min_height, iso.max_height)
+        radius = FindSubject.region_radius(ctx, ctx.center)
+        info(f"region of interest: radius {radius:.2f} m about ({ctx.center[0]:.3f}, {ctx.center[1]:.3f}) m, "
+             f"{iso.min_height:g} to {iso.max_height:g} m above the floor")
+        ctx.report["region_radius_m"] = radius
+        region = CylinderRegion(ctx.center, radius, iso.min_height, iso.max_height)
         ctx.isolator = ForegroundIsolator(ctx.source.sensor, ctx.background, ctx.floor, region, iso.edge_jump,
                                           iso.cluster_eps, iso.normal_radius)
         source = ctx.source
@@ -497,6 +512,7 @@ class TurntablePipeline(Pipeline):
     name = "fuse-turntable"
 
     def steps(self) -> StepList:
-        return StepList([LoadTurntableRecording(), SceneFromBackground(), LocatePlatform(), IsolatePerson(),
+        return StepList([LoadTurntableRecording(), SceneFromBackground(), FindTurntableSubject(), LocatePlatform(),
+                         IsolatePerson(),
                          MeasureAngles(),
                          SelectViews(), BuildViews(), CorrectViews(), FuseSurface(), WriteOutputs()])

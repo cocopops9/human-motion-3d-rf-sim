@@ -1,3 +1,10 @@
+# Which object is the one of interest (the same tests in every command).
+[select]
+rotation = false  # keep objects turning about a vertical axis (rotation test)
+human = false  # keep objects shaped like a standing person (Haar-like cascade)
+near = "none"  # keep objects whose centre is within near_radius of this point (floor frame X Y) [m]
+near_radius = 0.5  # distance for 'near' [m]
+
 # Which frames are analysed.
 [frames]
 max_frames = 60  # frames used, spread evenly over the recording
@@ -37,6 +44,7 @@ min_frames = 3  # objects seen in fewer frames are ignored
 # Rotation test of every tracked object.
 [rotation]
 min_speed = 0.5  # slower objects are not rotating [deg/s]
+still_turn = 1.0  # pairs that turned less than this (or slower than min_speed) are still pairs: the object was not turning between them [deg]
 min_turn = 5.0  # pairs that turned less than this do not give an axis [deg]
 max_axis_spread = 0.1  # the axes of the pairs must agree within this (robust spread) [m]
 max_speed_spread = 0.35  # the speeds of the pairs must agree within this fraction (robust spread)
@@ -47,6 +55,7 @@ min_fitness = 0.5  # pairs whose registration overlap is below this are ignored
 registration_voxel = 0.02  # voxel of the clouds registered [m]
 group_distance = 0.15  # rotating objects whose axes are closer than this, turning at the same speed, are parts of one body (an arm split from the torso) [m]
 group_speed = 0.35  # speeds of parts of one body agree within this fraction (same direction)
+min_total_turn = 0.0  # the object must turn at least this much over the recording (0: any turn; 360: a whole lap) [deg]
 
 # Shape tests of a standing adult (see docs/parameters.md for their effect).
 [human]

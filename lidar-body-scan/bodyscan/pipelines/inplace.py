@@ -17,8 +17,10 @@ Steps:
 
     LoadRecording        the run directory (frames, background)
     SceneFromBackground  floor frame and background from the empty-scene frames
-    LocatePerson         person region: [region] crop box, or a cylinder around
-                         [region] center, or around the person found in the frames
+    LocatePerson         person region: [region] crop box, or the person found in the
+                         frames with no region of the room assumed ([select]: by default
+                         the person cascade; detection.finder) and the cylinder it
+                         occupies about its centre ([region] center imposes the centre)
     FindStillPeriods     motion score of every frame, still periods
     BuildKeyframes       one per-pixel median keyframe per still period
     RegisterKeyframes    pose of every keyframe (registration.keyframes)
@@ -47,7 +49,8 @@ from bodyscan.io import write_confidence
 from bodyscan.jsonio import write_json
 from bodyscan.log import info, warning
 from bodyscan.pipelines.base import Context, Pipeline, Step, StepList
-from bodyscan.pipelines.common import FrameConfig, LoadRecording, SceneFromBackground, locate_person
+from bodyscan.detection.finder import SelectConfig
+from bodyscan.pipelines.common import FindSubject, FrameConfig, LoadRecording, SceneFromBackground, SubjectConfig
 from bodyscan.plots import motion_plot, top_view
 from bodyscan.registration.keyframes import KeyframeConfig, KeyframeRegistration
 from bodyscan.scene import CylinderRegion, FloorConfig, ForegroundIsolator, IsolationConfig, SensorBoxRegion
@@ -56,18 +59,22 @@ from bodyscan.scene.stillness import StillConfig, keyframe_range, motion_trace, 
 
 @dataclass
 class RegionConfig:
-    """Where the person stands. Without a crop box or a centre, the person is
-    found in the frames (the cascade of 'bodyscan detect --human')."""
+    """Where the person stands. Without a crop box, the person is found in the
+    frames by the tests of [select] (the cascade of 'bodyscan detect --human'
+    by default), and the region is measured on it."""
     crop_min: tuple[float, float, float] | None = param(None, "crop box, lower corner in the SENSOR frame (X Y Z)",
                                                         unit="m", effect="include the arms and the drift of the feet")
     crop_max: tuple[float, float, float] | None = param(None, "crop box, upper corner in the sensor frame (X Y Z)",
                                                         unit="m")
     center: tuple[float, float] | None = param(None, "centre of the person region in the floor frame (X Y); the "
-                                                     "region is a cylinder of radius [isolation] radius", unit="m")
+                                                     "person near it is used to measure the region (or [isolation] "
+                                                     "radius when given)", unit="m")
 
 
 @dataclass
 class InPlaceConfig:
+    select: SelectConfig = section(SelectConfig, human=True)
+    subject: SubjectConfig = section(SubjectConfig)
     frames: FrameConfig = section(FrameConfig)
     floor: FloorConfig = section(FloorConfig)
     region: RegionConfig = section(RegionConfig)
@@ -78,8 +85,15 @@ class InPlaceConfig:
     fusion: FusionConfig = section(FusionConfig, min_views=2)
 
 
-class LocatePerson(Step):
+class LocatePerson(FindSubject):
+    """Person region: the crop box when given; else the person found in the
+    frames ([select] tests, near [region] center when given) and a cylinder
+    about its centre reaching its farthest points plus [subject] margin."""
     name = "region"
+
+    def near(self, ctx: Context):
+        center = ctx.config.region.center
+        return None if center is None else np.array(center, dtype=np.float64)
 
     def run(self, ctx: Context) -> None:
         c = ctx.config
@@ -88,17 +102,16 @@ class LocatePerson(Step):
             region = SensorBoxRegion(r.crop_min, r.crop_max, iso.min_height, iso.max_height)
             described = f"crop box {tuple(r.crop_min)} to {tuple(r.crop_max)} (sensor frame)"
         else:
-            if r.center is not None:
-                center = np.array(r.center, dtype=np.float64)
+            if r.center is not None and iso.radius is not None:
+                ctx.subject, center = None, np.array(r.center, dtype=np.float64)
             else:
-                center, frames = locate_person(ctx.source, ctx.floor, ctx.background_range)
-                if center is None:
-                    raise SystemExit("no person found in the frames: pass --center X Y (floor frame) or "
-                                     "--crop-min/--crop-max (sensor frame)")
-                info(f"person found in {frames} frames")
-            region = CylinderRegion(center, iso.radius, iso.min_height, iso.max_height)
-            described = f"cylinder of radius {iso.radius:g} m around ({center[0]:.3f}, {center[1]:.3f}) m"
+                super().run(ctx)
+                center = np.array(r.center, dtype=np.float64) if r.center is not None else ctx.center
+            radius = self.region_radius(ctx, center)
+            region = CylinderRegion(center, radius, iso.min_height, iso.max_height)
+            described = f"cylinder of radius {radius:.2f} m about ({center[0]:.3f}, {center[1]:.3f}) m"
             ctx.report["region_center"] = center
+            ctx.report["region_radius_m"] = radius
         info(f"person region: {described}")
         ctx.isolator = ForegroundIsolator(ctx.source.sensor, ctx.background, ctx.floor, region, iso.edge_jump,
                                           iso.cluster_eps, iso.normal_radius)

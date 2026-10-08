@@ -1,3 +1,17 @@
+# Which object is the one of interest (the same tests in every command).
+[select]
+rotation = true  # keep objects turning about a vertical axis (rotation test)
+human = false  # keep objects shaped like a standing person (Haar-like cascade)
+near = "none"  # keep objects whose centre is within near_radius of this point (floor frame X Y) [m]
+near_radius = 0.5  # distance for 'near' [m]
+
+# Finding the object to scan in the frames, with the tests of [select].
+[subject]
+search_frames = 60  # frames spread over the recording used to find it
+margin = 0.15  # the region of interest reaches this beyond the farthest point of the object found (its arms and hands included) [m]
+body_depth = 0.1  # a person's centre lies this far behind the visible surface, when no rotation axis gives it [m]
+min_total_turn = 320.0  # with --rotation: the object must turn at least this much over the recording (360: a whole lap) [deg]
+
 # Reading the frames.
 [frames]
 min_range = 0.3  # returns closer than this are ignored [m]
@@ -14,15 +28,14 @@ refit_band = 0.015  # final least-squares refit on the points within this of the
 
 # Turntable platform: where it is and how it looks in the empty scene.
 [platform]
-center = "none"  # platform centre in the floor frame (X Y) [m]; not set: found from the platform ring in the empty-scene frames
-search_start = "none"  # where the ring search starts (floor frame) [m]; not set: at the person found in the frames
-ring_search = 0.8  # search distance of the ring around the start [m]
-ring_radius = 0.582  # radius of the platform ring [m]
+center = "none"  # platform centre in the floor frame (X Y) [m]; not set: the axis of the object found turning ([select]), refined by the platform ring
+ring_search = 0.3  # the platform ring is used when its centre is within this of the axis found [m]
+ring_radius = 0.582  # radius of the platform ring (0: no ring search) [m]
 platform_top = 0.03  # height of the platform top above the floor [m]
 
-# Cutting the person out of every frame (floor frame, platform centre known).
+# Cutting the object out of every frame (floor frame), inside its region of interest.
 [isolation]
-radius = 0.9  # person region: radius around the platform centre [m]
+radius = "none"  # region of interest: radius about the centre of the object; not set: measured on the object found ([subject] margin beyond its farthest point) [m]
 min_height = 0.05  # drop points below this height above the floor [m]
 max_height = 2.3  # drop points above this height [m]
 bg_threshold = 0.05  # a pixel is foreground if closer than the empty scene by this [m]

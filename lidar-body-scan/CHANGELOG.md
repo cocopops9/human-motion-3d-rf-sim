@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.3.0 (2026-10-08)
+
+### Changed: one mechanism finds the object of interest, with no region of the room assumed
+
+- New `detection.finder` (`ObjectFinder`, `FoundObject`, `SelectConfig`) and
+  `detection.selectors` (`Selector`, `NearSelector`, `HumanSelector`,
+  `RotationSelector`, `SelectorChain`): foreground against the empty scene,
+  objects followed across frames, then a chain of tests chosen by flags.
+  `detect`, `fuse` and `fuse-inplace` all use it, with the same flags
+  `--rotation`, `--human`, `--near X Y` (section `[select]`).
+- `fuse`: the object on the platform is the one turning about a vertical
+  axis by at least `--min-total-turn` (320 deg) by default; its rotation axis
+  starts the axis fit. The platform ring is an optional refinement near that
+  axis (`--ring-radius 0` switches it off; `--ring-search` now 0.3 m). The
+  fallback to the platform centre of the 2026-09-30 calibration and
+  `--search-start` are removed: if no object passes the tests, `fuse` stops
+  with the table of objects and the reason each one failed.
+- `fuse` and `fuse-inplace`: the region of interest is measured on the
+  object found (its reach over the frames plus `--margin`, 0.15 m) instead of
+  a fixed radius of 0.9 m; `--radius` (now not set by default) still imposes
+  one. New section `[subject]`: `--search-frames`, `--margin`,
+  `--body-depth`, `--min-total-turn`.
+- `fuse-inplace`: the person is found with `--human` by default; `--near X Y`
+  chooses among several people; `--center` and the crop box still impose
+  the region.
+- Rotation test: pairs slower than `min_speed` or turning less than
+  `still_turn` (1 deg) are still pairs, kept out of the statistics (a
+  turntable that waits before turning is now recognised as rotating); the
+  turn covered (`turned_deg`) can be required with `min_total_turn`. Long
+  pairs are searched around the sum of the neighbouring turns they span.
+- `detect`: the steps `SegmentAndTrack` and `Classify` become `FindObjects`;
+  the frames are read one at a time; the flags are configuration options
+  (`--rotation/--no-rotation`, TOML `[select]`). `pipelines.common.locate_person`
+  is replaced by `find_subject` and the step `FindSubject`; `check-view` uses
+  it too.
+- Tests: `--near`, every object reported without flags, a turntable track
+  with still parts before and after a lap, the whole-lap requirement, the
+  turntable finding its turning person and measured region.
+
+### Documentation
+
+- Algorithm Lab: a new first tab in chapter 2, "Frames → angles → fused
+  cloud", on the real scan: a frame sees one side, ICP measures a turn, the
+  chained turns drift, the motor model fitted to all pairs, every frame
+  turned back by its angle, and the same views with chained or constant
+  speed angles (smeared); the least-squares simulation is now the last tab,
+  without overlapping labels; every step of the watertight remesh animates
+  and plays when selected; a new tab animates the person cascade stage by
+  stage (height slices, occupancy image, integral image, the four look-ups
+  of every Haar-like rectangle, the scores); chapters 1 and 7 describe the
+  finder and the measured region.
+- algorithms.md, architecture.md, tuning.md, README: the finder, the
+  selectors and the flags; new animations `lab_story.gif` and `lab_haar.gif`.
+
 ## Documentation (2026-10-08, second pass)
 
 - Algorithm Lab: the whole isolation chain on a real frame (why background

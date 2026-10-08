@@ -1,4 +1,4 @@
-"""The turntable platform: its ring found in the empty scene gives the centre."""
+"""The turntable platform: its ring, when found in the empty scene, refines the centre."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ from bodyscan.geometry import fit_circle
 class PlatformConfig:
     """Turntable platform: where it is and how it looks in the empty scene."""
     center: tuple[float, float] | None = param(
-        None, "platform centre in the floor frame (X Y) [m]; not set: found from the platform ring in the "
-              "empty-scene frames", effect="set it when the ring search fails (sensor moved, shiny platform)")
-    search_start: tuple[float, float] | None = param(
-        None, "where the ring search starts (floor frame) [m]; not set: at the person found in the frames",
-        effect="the ring is searched within --ring-search of this point")
-    ring_search: float = param(0.8, "search distance of the ring around the start", unit="m")
-    ring_radius: float = param(0.582, "radius of the platform ring", unit="m")
+        None, "platform centre in the floor frame (X Y) [m]; not set: the axis of the object found turning "
+              "([select]), refined by the platform ring", effect="imposes the start of the axis fit and picks the "
+                                                                  "object near it")
+    ring_search: float = param(0.3, "the platform ring is used when its centre is within this of the axis found",
+                               unit="m")
+    ring_radius: float = param(0.582, "radius of the platform ring (0: no ring search)", unit="m",
+                               effect="the ring is an optional refinement: a setup without it works with 0")
     platform_top: float = param(0.03, "height of the platform top above the floor", unit="m",
                                 effect="z = 0 of the output is here")
 

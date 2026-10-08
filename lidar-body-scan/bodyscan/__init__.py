@@ -24,4 +24,4 @@ Every tunable parameter is declared once in a configuration section (see
 bodyscan.config) together with its help text and the effect of changing it.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

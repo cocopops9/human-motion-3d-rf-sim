@@ -18,7 +18,7 @@ bodyscan/
     motion/          platform angle against time: models, fitting, pairs, estimator
     fusion/          views, per-view corrections, surface fusion
     meshing/         reconstruction, cleanup, watertight remesh, smoothing, quality
-    detection/       segmentation, tracking, rotation test, person cascade
+    detection/       segmentation, tracking, rotation test, person cascade, selectors, object finder
     capture/         sensor access, run directory, phases, protocols, motor
     pipelines/       the steps assembled for one setup
     synthetic.py     synthetic scenes and recordings
@@ -73,15 +73,47 @@ class Step(ABC):
 class TurntablePipeline(Pipeline):
     config_class = TurntableConfig
     def steps(self) -> StepList:
-        return StepList([LoadTurntableRecording(), SceneFromBackground(), LocatePlatform(), IsolatePerson(),
-                         MeasureAngles(), SelectViews(), BuildViews(), CorrectViews(), FuseSurface(),
-                         WriteOutputs()])
+        return StepList([LoadTurntableRecording(), SceneFromBackground(), FindTurntableSubject(), LocatePlatform(),
+                         IsolatePerson(), MeasureAngles(), SelectViews(), BuildViews(), CorrectViews(),
+                         FuseSurface(), WriteOutputs()])
 ```
 
 Every step adds what it measured to `ctx.report`, which is written as the
 JSON report with the full configuration. Steps shared by several pipelines
-live in `pipelines.common` (loading, the scene from the empty frames, locating
-the person).
+live in `pipelines.common` (loading, the scene from the empty frames,
+`FindSubject`).
+
+### One way to find the object of interest (`detection.finder`)
+
+Before 2026-10-08 three pieces of code answered "where is the object?": the
+turntable searched the platform ring around a person found by the cascade,
+with a calibration of 2026-09-30 as the last fallback and a person region of
+fixed radius 0.9 m around it; the in-place pipeline drew a cylinder of the
+same radius around the person; `detect` had its own segmentation, tracking
+and classification. A setup in another room, another platform or another
+object broke the first two. Now every command uses the same mechanism and
+none assumes a place in the room:
+
+```
+empty scene ──► foreground (Segmenter) ──► objects followed across frames (Tracker)
+            ──► SelectorChain: NearSelector, HumanSelector, RotationSelector (flags --near, --human, --rotation)
+            ──► FoundObject: centre (rotation axis or body centre), reach, height range, verdicts
+```
+
+```python
+finder = ObjectFinder(segmenter, TrackingConfig(), selector_chain(select, rotation, human, sampling))
+objects = finder.find(source, spread_indices(len(source), 60))
+subject = ObjectFinder.best(objects)              # selected, most points over the frames
+region = CylinderRegion(subject.center, subject.reach() + margin, min_height, max_height)
+```
+
+`detect` lists every `FoundObject`; `FindSubject` (turntable and in place)
+keeps the best one and sizes the region of `ForegroundIsolator` on it. The
+flags are one configuration section, `[select]`, shared by the three
+commands; the turntable sets `--rotation` (and `min_total_turn` 320°) by
+default, the in-place pipeline `--human`. User input (`--center`,
+`--radius`, a crop box) still overrides, but nothing falls back to a fixed
+position.
 
 ### Strategies behind small interfaces
 
@@ -90,12 +122,13 @@ the person).
 | `io.FrameSource` | `NpzRecording`, `PointCloudFolder` | every pipeline |
 | `io.SensorModel` | `LutSensorModel` | range-image sources |
 | `scene.FloorEstimator` | `RansacFloor`, `CropBoxFloor` | `SceneFromBackground` |
-| `scene.PlatformDetector` | `RingPlatform` | `LocatePlatform` |
+| `scene.PlatformDetector` | `RingPlatform` | `LocatePlatform` (optional refinement) |
 | `scene.Region` | `CylinderRegion`, `SensorBoxRegion` | `ForegroundIsolator` |
 | `motion.MotionModel` | `StepperMotion`, `FreeMotion`, `MeanMotion` | `PlatformMotionEstimator` |
 | `fusion.ViewCorrection` | `SwayCorrection`, `ViewAngleSearch`, `SlabCorrection`, `LimbCorrection` | `CorrectViews`, `CorrectKeyframes` |
 | `meshing.Mesher` | `PoissonMesher`, `BallPivotingMesher`, `AlphaMesher` (and `GridMesher`) | `Reconstruct` |
-| `detection.Segmenter` | `BackgroundSegmenter`, `ObjectSegmenter` | `FindScene` |
+| `detection.Segmenter` | `BackgroundSegmenter`, `PointBackgroundSegmenter`, `ObjectSegmenter` | `ObjectFinder` |
+| `detection.Selector` | `NearSelector`, `HumanSelector`, `RotationSelector` | `SelectorChain` of `ObjectFinder` |
 | `detection.Stage` | `SizeStage`, `ColumnStage`, `SilhouetteStage`, `SurfaceStage`, `ShapeStage` | `HumanCascade` |
 | `detection.Feature` | `RectangleContrast`, `WidthRatio`, `Centered` (Haar-like), `CurvedSurface` | `ShapeStage` |
 | `capture.Phase` | `Background`, `Countdown`, `Hold`, `Stepping`, `MotorTurn`, `Record` | `Session` |
@@ -163,13 +196,33 @@ Subclass `fusion.ViewCorrection` (`apply(clouds, groups, reference_views)`
 returns the corrected clouds and a report) and pass it to the step:
 `CorrectViews(extra=[MyLegCorrection(config)])`.
 
+### Another way to select the object
+
+A selector is a test on a track (its clusters, floor frame, over the frames):
+
+```python
+from bodyscan.detection.selectors import Selector, Verdict
+from bodyscan.pipelines.common import FindSubject
+
+class TallerThan(Selector):
+    name, cost = "tall", 0                            # cost orders the chain: cheap first
+    def __init__(self, height):
+        self.height = height
+    def evaluate(self, track):
+        top = max(float(c.points[:, 2].max()) for c in track.clusters)
+        return Verdict(top >= self.height, f"top {top:.2f} m")
+```
+
+Add it to the chain built by `selector_chain` in a subclass of `FindSubject`
+(fusion) or `FindObjects` (detect); the other steps do not change.
+
 ### Another test in the person cascade
 
 A new feature of the shape stage:
 
 ```python
 from bodyscan.detection.human import Feature, HumanCascade, ShapeStage, default_features, rise
-from bodyscan.pipelines.detect import Classify, DetectPipeline
+from bodyscan.pipelines.detect import DetectPipeline, FindObjects
 
 class TallEnough(Feature):
     name = "tall enough"
@@ -184,7 +237,7 @@ def my_cascade(config, sampling):
 class MyDetect(DetectPipeline):
     def steps(self):
         steps = super().steps()
-        steps[steps.index_of(Classify)] = Classify(cascade_factory=my_cascade)
+        steps[steps.index_of(FindObjects)] = FindObjects(cascade_factory=my_cascade)
         return steps
 ```
 
@@ -230,7 +283,11 @@ docs/parameters.md`) and in the JSON report of every run.
 
 `tests/` uses unittest (no extra dependency). `synthetic.py` renders scenes
 with known truth: the detection tests check the axes of two rotating
-platforms and the two people of a scene; the pipeline tests (slow, behind
+platforms and the two people of a scene, the `--near` selection, and a
+turntable track with still parts before and after a lap (the rotation test
+and the whole-lap requirement); the fast pipeline tests check that the
+turntable finds the turning person and measures its region, and refuses a
+recording with less than a lap; the pipeline tests (slow, behind
 `BODYSCAN_SLOW_TESTS=1`) fuse a synthetic turntable run and a synthetic
 in-place run and compare with the truth; the capture tests run the protocols
 on a fake sensor; the meshing tests check closedness, orientation and

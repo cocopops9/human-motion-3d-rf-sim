@@ -38,7 +38,8 @@ class CheckView(Command):
 
     def run(self, args):
         from bodyscan.io import NpzRecording, median_range
-        from bodyscan.pipelines.common import locate_person
+        from bodyscan.detection.finder import SelectConfig
+        from bodyscan.pipelines.common import SubjectConfig, find_subject
         from bodyscan.scene import RansacFloor, RingPlatform
         from bodyscan.scene.coverage import beam_limits, sampling_at
 
@@ -59,18 +60,22 @@ class CheckView(Command):
             center = np.array(args.center, dtype=np.float64)
             info(f"platform centre (given): ({center[0]:.3f}, {center[1]:.3f}) m")
         else:
-            start = None
+            person = None
             if source.background_count():
-                start, _ = locate_person(source, floor, source.background_range(0.5))
-            ring = RingPlatform().find(world, start if start is not None else np.array([1.1, 0.0]))
+                # the person on the platform, found like 'bodyscan detect --human' (no place assumed)
+                found, _ = find_subject(source, floor, source.background_range(0.5), SelectConfig(human=True),
+                                        SubjectConfig(search_frames=args.frames))
+                person = None if found is None else found.center
+            ring = RingPlatform(search=0.3).find(world, person) if person is not None else None
             if ring is not None and ring.plausible:
                 center = np.asarray(ring.center)
                 info(f"platform ring: centre ({center[0]:.3f}, {center[1]:.3f}) m, radius {ring.radius:.3f} m")
-            elif start is not None:
-                center = start
+            elif person is not None:
+                center = person
                 info(f"platform ring not found; person at ({center[0]:.3f}, {center[1]:.3f}) m")
             else:
-                raise SystemExit("neither the platform ring nor a person found; pass --center X Y")
+                raise SystemExit("no person found in the frames (and no empty-scene frames to find one, or the "
+                                 "person cascade rejected it); pass --center X Y")
         offset = center - floor.sensor_position[:2]
         distance = float(np.hypot(*offset))
         info(f"platform centre {distance:.2f} m from the sensor (horizontal)")

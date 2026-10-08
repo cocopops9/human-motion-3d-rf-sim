@@ -15,13 +15,13 @@ names the module that implements it; the parameters are in
 
 | Step | Section | Live demo |
 |---|---|---|
-| find the person in a frame | [2](#2-isolating-the-person-scenebackground-sceneisolation) | [the whole chain on a real frame, the threshold](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
-| platform angle of every frame | [3.3](#33-platform-angle-of-every-frame-motion) | [ICP about the axis, axis error, motor model](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
+| find the object of interest (no region assumed) | [2](#2-isolating-the-person-scenebackground-sceneisolation), [6](#6-finding-the-object-of-interest-detection-pipelinesdetect) | [the whole chain on a real frame, the threshold](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
+| platform angle of every frame | [3.3](#33-platform-angle-of-every-frame-motion) | [frames → angles → fused cloud, ICP about the axis, axis error, motor model](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
 | views turned back and fused | [3.4](#34-views-fusionviews), [3.6](#36-fusion-fusionsurface) | [turn back, support filter, voxels, surface fit](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
 | points to surface | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 1 | [Poisson and marching squares](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
 | closed mesh | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 3 | [signed distance, ray parity](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
 | smoothing | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 4 | [one round step by step, reflection lines on the real chest, reflected rays](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) |
-| rotating objects and people | [6](#6-detection-pipelinesdetect-detection) | [rotation test and person cascade on real objects](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection) |
+| rotating objects and people | [6](#6-finding-the-object-of-interest-detection-pipelinesdetect) | [rotation test, person cascade on real objects, the cascade step by step](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection) |
 
 ## 1. Data and coordinate frames
 
@@ -56,8 +56,13 @@ reported.
 2. **Foreground**: a pixel is foreground if it is closer than the background
    by more than max(`bg_threshold`, `bg_relative` x range), or if it has a
    return where the empty scene had none.
-3. **Region**: a cylinder of `radius` around the platform centre (turntable),
-   or a crop box in the sensor frame, between `min_height` and `max_height`.
+3. **Region**: measured on the object found by the finder (section 6), not a
+   fixed place in the room: a vertical cylinder about its centre (the rotation
+   axis on the turntable, the body centre in place) whose radius is the reach
+   of its points over the run (99.5 % of their horizontal distances, arms
+   included) plus `margin` (15 cm), between `min_height` and `max_height`.
+   `radius` imposes a radius; `fuse-inplace` also accepts a crop box in the
+   sensor frame.
 4. **Mixed pixels**: a beam that hits an edge returns a range between the
    foreground and the background. A pixel whose range jumps by more than
    `edge_jump` towards both neighbours (horizontally or vertically) is dropped.
@@ -78,8 +83,8 @@ grazing angles. Each later test uses a property the false alarms lack:
 
 | test | property used | removed in frame 300 |
 |---|---|---|
-| region (cylinder of `radius` around the axis, 5 cm to 2.3 m) | where the person must be | 2,798 |
-| mixed pixels (`edge_jump`) | a range between two surfaces | 124 |
+| region (measured on the object found: 46 cm reach + 15 cm margin about its axis, 5 cm to 2.3 m) | the volume the selected object occupies | 2,799 |
+| mixed pixels (`edge_jump`) | a range between two surfaces | 123 |
 | largest DBSCAN cluster (`cluster_eps`) | a body is one connected object | 9 |
 | statistical outliers (20 neighbours, 2 σ) | local density | 250 |
 
@@ -101,14 +106,22 @@ fused cloud.
 
 ## 3. Turntable fusion (`pipelines.turntable`)
 
-### 3.1 Platform centre (`scene.platform`, `pipelines.common.locate_person`)
+### 3.1 The object on the platform and its axis (`pipelines.common.FindSubject`, `scene.platform`)
 
-The person cascade of the detector (section 6) finds the person in 12 frames
-spread over the run; the ring of the platform (0.5 to 10 cm high, 0.35 to
-0.80 m from the centre) is searched around it in the empty scene: a circle fit
-near the start, else a Hough vote for circles of the ring radius. If no
-plausible ring is found, the person's position starts the axis fit, which
-then moves the axis to where the views agree (27 mm in the synthetic test).
+`FindTurntableSubject` runs the finder of section 6 on `search_frames` (60)
+frames spread over the run, with the tests of `[select]`: by default
+`--rotation`, turning about a vertical axis by at least `min_total_turn`
+(320°, most of a lap: every side was seen); `--human` adds the person
+cascade, `--near X Y` picks the object near a point. Nothing assumes where
+the platform is. The object found gives the start of the axis fit (its
+rotation axis, a few mm from the final one: 4 mm on tt9) and the region of
+section 2. Optionally (`ring_radius` > 0), the ring of a platform (0.5 to 10
+cm high) is searched in the empty scene around that axis, and its centre is
+used when it lies within `ring_search` of it; without a ring the joint axis
+fit of 3.3 measures the axis anyway. `--center X Y` imposes the start (the
+object near it is still used for the region), and `--center` with `--radius`
+skips the search. If no object passes the tests, `fuse` stops and prints the
+table of objects with the reason each one failed.
 
 ### 3.2 Frame times (`motion.timing`)
 
@@ -170,6 +183,11 @@ parameters:
    model-free solution when they agree within `model_agreement` (their errors
    are partly independent), else the model-free solution. The angle plot
    (`<out>_angle.png`) shows every solution and the residuals.
+
+<p align="center">
+  <img src="img/lab/lab_story.gif" alt="From frames to angles to the fused cloud, on the real scan" width="100%">
+</p>
+<p align="center"><sub>The whole chain on the real scan (chest slice of the 378 views): a frame sees only the side facing the sensor; ICP measures the turn between two frames; chained turns drift (27° after 3.7 laps); the motor model fitted to all pairs gives one angle per frame; every frame is turned back by its angle and the laps land on the same surface; with chained or constant-speed angles (errors up to 25°) the laps disagree and the body is smeared. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles">▶ try it live</a></b></sub></p>
 
 **How the registrations and the motor model work together.** ICP never
 gives an angle, only the turn between two frames, θ(tᵢ) − θ(tⱼ). The angles
@@ -237,7 +255,9 @@ bounded motions:
 
 ## 4. In-place fusion (`pipelines.inplace`)
 
-1. **Person region**: found in the frames by the person cascade (or given).
+1. **Person region**: the person found by the finder of section 6 (by default
+   `--human`; `--near X Y` or `--center X Y` to choose among several people)
+   and the cylinder it occupies over the run plus `margin`, or a crop box.
 2. **Still periods** (`scene.stillness`): per frame, the fraction of person
    pixels that changed (in or out of the person mask, or range change above
    `motion_threshold`). A frame is still when the score stays below
@@ -359,7 +379,26 @@ the denoising of the cloud, before any mesh exists.
    | fidelity | distance from the fused cloud to the mesh (`--cloud` for `smooth`): how far the smoothing moved the surface |
    | distance from the input (`smooth`) | distance of every vertex from the input mesh: the shape change |
 
-## 6. Detection (`pipelines.detect`, `detection`)
+## 6. Finding the object of interest (`detection`, `pipelines.detect`)
+
+One mechanism finds the object of interest in every command, without a
+region of the room: `detection.finder.ObjectFinder` (foreground, objects,
+tracks) and a chain of `detection.selectors` (tests). `bodyscan detect` lists
+every object with the verdicts; `fuse` and `fuse-inplace` take the selected
+object with the most points over the frames and measure their region on it.
+
+| flag | selector | test | default in |
+|---|---|---|---|
+| `--near X Y` | `NearSelector` | centre within `near_radius` of a point | (none) |
+| `--human` | `HumanSelector` | the Haar-like person cascade (step 6 below) | `fuse-inplace` |
+| `--rotation` | `RotationSelector` | turning about a vertical axis (step 5), optionally by `min_total_turn` | `fuse` (320°) |
+
+The chain is an AND, evaluated cheapest first, and stops at the first
+failure, so an object that is not a person is never registered for the
+rotation test. A new criterion (a size range, a colour from reflectivity, a
+learned classifier) is a `Selector` subclass added to the chain; nothing
+else changes. Without any flag, `detect` runs both tests on every object for
+the report, and the fusion commands take the object with the most points.
 
 1. **Frames**: `max_frames` frames spread over the recording (the rotation test
    needs frames several degrees of turn apart).
@@ -378,9 +417,16 @@ the denoising of the cloud, before any mesh exists.
    t = (I - R) c, so c = (I - R)⁻¹ t. A rotating object gives the same axis and
    the same angular speed for every pair (`max_axis_spread`,
    `max_speed_spread`, `min_sign_agreement`); a walking person gives axes all
-   over the place; a symmetric object gives random turns. The axis is refined
-   by the joint fit of the turntable pipeline. Rotating objects with the same
-   axis and speed are parts of one body (an arm split from the torso).
+   over the place; a symmetric object gives random turns. Pairs slower than
+   `min_speed` or turning less than `still_turn` are **still pairs** (a
+   turntable waits before it starts and after it stops): they are counted
+   but kept out of the speed, sign and axis statistics. The turn covered by
+   the track (neighbouring turns summed from the first turning one to the
+   last) can be required to reach `min_total_turn` (a whole lap). The axis is
+   refined by the joint fit of the turntable pipeline. Rotating objects with
+   the same axis and speed are parts of one body (an arm split from the
+   torso). On tt9 (frames 0 to 1110, the first 18 s still), 37 frames give
+   the axis 4 mm from the fusion's and a turn of 366° (truth about 370°).
 6. **Person cascade** (`detection.human`), in the spirit of a Haar cascade
    (Viola and Jones 2001): cheap tests first, each one can reject.
 
@@ -402,9 +448,16 @@ the denoising of the cloud, before any mesh exists.
    dominant directions: people 0.2 to 0.35, boxes and chairs 0.5 to 0.8). A
    tracked object is a person when at least half of its frames (and two)
    pass.
-7. **Centres**: the rotation axis for a rotating object; for a person that
-   does not rotate, the centroid of the visible surface moved away from the
-   sensor by `body_radius` (a few cm).
+
+<p align="center">
+  <img src="img/lab/lab_haar.gif" alt="The person cascade step by step" width="100%">
+</p>
+<p align="center"><sub>The cascade on a real object of frame 300, stage by stage: size, 5 cm height slices, the occupancy image filled row by row, the integral image I(r, c), then each Haar-like feature with the four look-ups I(D) − I(B) − I(C) + I(A) of its rectangles and its score, and the weighted mean against <code>score_threshold</code>. The person scores 0.95; an object 1.80 m tall passes the hard stages but scores 0.41 (no isolated head, no compact legs). <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection">▶ try it live</a></b></sub></p>
+7. **Centres and reach**: the rotation axis for a rotating object; for a
+   person that does not rotate, the centroid of the visible surface moved
+   away from the sensor by `body_radius` (10 cm); else the median of its
+   points. The reach (99.5 % of the horizontal distances of its points from
+   the centre, over all frames) sizes the region of the fusion pipelines.
 
 <p align="center">
   <img src="img/lab/lab_rotation.gif" alt="Rotation test and person cascade" width="49%">

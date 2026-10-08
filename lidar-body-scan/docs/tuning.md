@@ -12,7 +12,7 @@ there:
 
 | Parameter | Live demo |
 |---|---|
-| `bg_threshold`, `bg_relative`, `radius`, `edge_jump`, `cluster_eps` | [find the person](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
+| `bg_threshold`, `bg_relative`, `radius`, `margin`, `edge_jump`, `cluster_eps` | [find the person](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
 | axis error, long pairs, motor model | [platform angle](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
 | `min_views`, `support_radius`, `voxel`, `confidence_radius` | [fusion](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
 | `depth` (Poisson) | [points to surface](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
@@ -42,7 +42,7 @@ are the measured 3D results.
 | tt13b | the fusion is "completely messed up" | very likely fused with a version older than `fuse_turntable.py` 2026-10-02c: frames without the person (after stepping off) took the host clock, the frame times went backwards and almost every view got the angle 0 (the half-moon). A synthetic recording with 120 such frames at the end, two stalls of the platform and a recording that ends before the turn, fuses correctly with 2026-10-02d (angles 1.4 deg rms, cloud to truth median 2.0 mm) and with the package (2.2 deg rms, 2.3 mm; it also warns that the end of the turn is missing). Check `version` in `person_tt13b.json` | fuse again with `python -m bodyscan fuse` |
 | tt13b | the feet are missing | field of view: lens at 1.20 m, axis at about 1.1 m; the feet need 49 deg below the horizon and the beams reach 45 | move the sensor back, or lower it (docs/hardware.md, section 4) |
 | tt14 | thumb separated, head cropped | the thumb gap (30 to 50 mm) is above the resolution limit (about 11 to 17 mm at 1 m); the sensor was tilted down to bring the feet in, which pushed the head out | same as above: no tilt can fit head and feet at this distance and height |
-| tt16 | hands, part of the feet and part of the head cropped | hands: the person region had a radius of 0.55 m (now 0.9 m, `--radius`); head and feet: the field of view, as above | `--radius 0.9` (default now); sensor position |
+| tt16 | hands, part of the feet and part of the head cropped | hands: the person region had a fixed radius of 0.55 m (since 2026-10-08 it is measured on the person, reach plus `--margin`); head and feet: the field of view, as above | default region, or `--margin`; sensor position |
 
 Nothing in the processing restores a part that the beams never reached. Run
 `python -m bodyscan check-view` on a 20 s capture after every change of the
@@ -55,7 +55,7 @@ beams at the person and the tilt that fits.
 
 | Symptom | Parameter | Effect |
 |---|---|---|
-| hands or arms cut at a vertical line | `--radius` (0.9 m) | the person region around the platform centre; it must include the hands. Larger takes in more of the room, which the empty-scene test removes |
+| hands or arms cut at a vertical line | `--margin` (0.15 m), `--radius` (not set) | the region is measured on the object found: the reach of its points over `--search-frames` (60) frames plus `margin`. A hand held out only in frames not used to find it can fall outside: raise `margin` (or `--search-frames`). `--radius R` imposes a radius. Larger takes in more of the room, which the empty-scene test and the largest-cluster test remove |
 | the lowest centimetres of the shoes missing | `--min-height` (0.05 m), `--bg-threshold` (0.05 m) | points below `min-height` are dropped; a pixel must be closer than the empty scene by `bg-threshold`, so the edge of the sole within 5 cm of the platform is lost. 0.03 and 0.03 keep more of the shoes and more platform noise |
 | thin parts (fingers, hands far from the body) thinned or missing | `--min-views` (3 per lap), `--support-radius` (0.02 m) | a point needs neighbours from this many views; thin parts are seen by fewer views. Lower `min-views` keeps them, and more ghosts |
 | a hand separated from the body disappears | `--cluster-eps` (0.06 m) | only the largest cluster of every frame is kept; a hand separated by more than this from the arm is dropped |
@@ -67,7 +67,9 @@ beams at the person and the tilt that fits.
 |---|---|---|
 | the curves of `<out>_angle.png` disagree, or the residuals exceed a few degrees | `--angle-source` (`auto`) | `free`: model-free only (best when the motor lost steps); `profile`: motor model only; `pairs`: the old per-pair solve |
 | the total turn is wrong | `--turn-deg` | the commanded turn is used when the data agree within `--loop-tolerance` (3 deg) |
-| a doubled body shifted sideways | `--center X Y` | impose the platform centre (from `python -m bodyscan detect C:\lidar\tt17 --rotation --human`); the axis fit starts there |
+| `fuse` stops: "no object passed the tests" | `--min-total-turn` (320 deg), `--rotation/--no-rotation`, `--human`, `--near X Y` | the table printed above the message gives each object's reason. A recording shorter than a lap fails the default; lower `min-total-turn` (the scan then misses a side). Several turning objects: `--human` or `--near` picks the right one |
+| a doubled body shifted sideways | `--center X Y` | impose the start of the axis fit (from `python -m bodyscan detect C:\lidar\tt17 --rotation --human`) |
+| the wrong object is scanned | `--near X Y`, `--human` | the object with the most points among those passing the tests is scanned; `--near` chooses by position, `--human` by shape |
 | two-PC recording, phases mislabelled | `--ignore-phases` | the still parts and the turn are found in the data |
 | many views dropped ("correction out of bounds") | `--max-turn-correction` (3 deg), `--max-shift` (0.03 m), `--max-tilt` (2 deg) | bounds of the sway correction; a dropped view did not fit the others (wrong angle, or the person moved). If more than `--max-dropped-views` (25 %) would be dropped, they are kept and the angles are suspect |
 | arms blurred or thinner than in a single view | `--limb-iterations` (2), `--limb-max-shift` (0.06 m) | the per-arm correction; 0 turns it off |
@@ -257,6 +259,7 @@ as a bump; `--normal-sigma 0.35` or `--max-deviation-mm` protects them). The exp
 | a person is split into several objects | `--cluster-distance` (0.10 m) | larger joins the parts, and also a person with an object they touch |
 | a rotating object is missed | `--max-axis-spread` (0.10 m), `--max-speed-spread` (0.35), `--min-speed` (0.5 deg/s) | looser accepts noisier rotations, and also some walking people |
 | the decision is unstable | `--max-frames` (60) | more frames, spread over the recording, give steadier decisions |
+| a turntable that waits before turning is not found rotating | `--still-turn` (1 deg), `--min-speed` (0.5 deg/s) | pairs slower than these are still pairs and do not count against the rotation; they are reported as `still_pairs` |
 | a person farther than about 6 m is missed | `--curved-threshold`, `--max-flat-fraction` | at 6 m the beams are 7.4 cm apart, the normals are estimated over larger patches and the body looks flatter; higher values accept it, and more furniture |
 
 Measured values (people against objects) behind the defaults, on tt13, tt14,

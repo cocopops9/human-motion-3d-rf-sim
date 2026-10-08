@@ -3,8 +3,9 @@
 ForegroundIsolator chains the tests every pipeline needs (closer than the
 empty scene, inside a region of interest, not a mixed edge pixel, largest
 cluster, no statistical outliers, normals towards the sensor). The region of
-interest is a Region object, so a pipeline chooses a cylinder around the
-platform, a crop box, or its own shape."""
+interest is a Region object: the fusion pipelines measure it on the object
+found by detection.finder (a cylinder about its centre reaching its farthest
+points), or take a crop box given by the user."""
 
 from __future__ import annotations
 
@@ -22,10 +23,11 @@ from bodyscan.scene.floor import FloorFrame
 
 @dataclass
 class IsolationConfig:
-    """Cutting the person out of every frame (floor frame, platform centre known)."""
-    radius: float = param(0.9, "person region: radius around the platform centre", unit="m",
-                          effect="must include the hands: 0.55 cut hands held out sideways (tt16); larger "
-                                 "takes in more of the surroundings, which the background removes")
+    """Cutting the object out of every frame (floor frame), inside its region of interest."""
+    radius: float | None = param(None, "region of interest: radius about the centre of the object; not set: "
+                                       "measured on the object found ([subject] margin beyond its farthest point)",
+                                 unit="m", effect="set it only to impose a region; it must include the hands "
+                                                  "(0.55 cut hands held out sideways in tt16)")
     min_height: float = param(0.05, "drop points below this height above the floor", unit="m",
                               effect="lower keeps more of the shoes (platform top at 0.03 m) but may keep "
                                      "platform noise and reflections")

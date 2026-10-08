@@ -91,13 +91,32 @@ class FirstStepsTest(unittest.TestCase):
 
     def test_turntable_platform_and_person(self):
         from bodyscan.pipelines.base import Context
-        from bodyscan.pipelines.turntable import IsolatePerson, LoadTurntableRecording, LocatePlatform
+        from bodyscan.pipelines.turntable import (FindTurntableSubject, IsolatePerson, LoadTurntableRecording,
+                                                  LocatePlatform)
         from bodyscan.pipelines.common import SceneFromBackground
-        ctx = Context(config=TurntableConfig(), report={}, run_dir=self.turntable, out=self.folder.path / "x")
-        for step in (LoadTurntableRecording(), SceneFromBackground(), LocatePlatform(), IsolatePerson()):
+        config = TurntableConfig()
+        config.subject.min_total_turn = 0.0             # 3 s of recording: 20 deg of turn, not a lap
+        config.platform.ring_radius = 0.0               # the axis comes from the rotation test alone
+        ctx = Context(config=config, report={}, run_dir=self.turntable, out=self.folder.path / "x")
+        for step in (LoadTurntableRecording(), SceneFromBackground(), FindTurntableSubject(), LocatePlatform(),
+                     IsolatePerson()):
             step.run(ctx)
-        np.testing.assert_allclose(ctx.center, (1.2, 0.1), atol=0.05)
+        self.assertTrue(ctx.subject.rotating)
+        np.testing.assert_allclose(ctx.center, (1.2, 0.1), atol=0.02)
+        # the region is measured on the person (arms included), not a fixed radius
+        self.assertGreater(ctx.report["region_radius_m"], 0.35)
+        self.assertLess(ctx.report["region_radius_m"], 0.80)
         self.assertEqual(int(ctx.usable.sum()), 30)
+
+    def test_turntable_asks_for_a_whole_lap(self):
+        from bodyscan.pipelines.base import Context
+        from bodyscan.pipelines.turntable import FindTurntableSubject, LoadTurntableRecording
+        from bodyscan.pipelines.common import SceneFromBackground
+        ctx = Context(config=TurntableConfig(), report={}, run_dir=self.turntable, out=self.folder.path / "z")
+        for step in (LoadTurntableRecording(), SceneFromBackground()):
+            step.run(ctx)
+        with self.assertRaises(SystemExit):              # 20 deg of turn only
+            FindTurntableSubject().run(ctx)
 
     def test_inplace_person_and_still_periods(self):
         from bodyscan.pipelines.base import Context
