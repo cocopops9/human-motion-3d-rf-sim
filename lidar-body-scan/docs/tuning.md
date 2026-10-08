@@ -6,6 +6,22 @@ effects quoted were measured: on the real tt16 cloud for the mesh, on the
 synthetic turntable run rsE (with a known truth) for the fusion, and on the
 lab recordings tt13, tt14 and tt15 for the detector.
 
+**See the parameters act.** The [Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html) runs the algorithms
+on slices of a real scan in the browser; each parameter below has a slider
+there:
+
+| Parameter | Live demo |
+|---|---|
+| `bg_threshold`, `bg_relative`, `radius`, `edge_jump` | [find the person](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
+| axis error, long pairs, motor model | [platform angle](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
+| `min_views`, `support_radius`, `voxel`, `confidence_radius` | [fusion](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
+| `depth` (Poisson) | [points to surface](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
+| `watertight` (grid) | [closed mesh](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
+| `scale_mm`, `rounds`, `normal_sigma`, `finish_rounds`, `max_deviation_mm`, `keep_volume` | [smoothing](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) |
+
+The 2D slices show the trend of each parameter; the numbers in this guide
+are the measured 3D results.
+
 ## 0. Read the outputs before changing anything
 
 | Output | What to look at |

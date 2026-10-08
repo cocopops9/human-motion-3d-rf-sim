@@ -3,8 +3,8 @@
 Sionna RT reflects every ray on the plane of the triangle it hits, using the
 triangle's own (face) normal: smooth vertex normals change nothing. A
 triangle of edge L whose vertices carry a random error sigma along the
-surface normal is tilted by about 2 sigma / L radians: 1 mm of noise on
-5 mm triangles is 20 degrees of random tilt, so reflections scatter like
+surface normal is tilted by about sqrt(2) sigma / L radians (rms): 1 mm of
+noise on 5 mm triangles is about 16 degrees of random tilt, so reflections scatter like
 glitter instead of following the curvature of the body. Two levers:
 
     1. lower the noise (bilateral normal filtering, below);

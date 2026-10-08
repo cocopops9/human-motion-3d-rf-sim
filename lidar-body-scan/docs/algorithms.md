@@ -4,6 +4,24 @@ This document follows the data from the sensor to the mesh. Every section
 names the module that implements it; the parameters are in
 [parameters.md](parameters.md), their effect in [tuning.md](tuning.md).
 
+> **Interactive companion: the [Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html).** Every step below
+> runs there as a live simulation on 2D slices of a real scan (run tt9, the
+> scan `pepito`), with the package's rules and default parameters: move a
+> slider and watch the background subtraction, the registration about the
+> axis, the motor-model fit, the fusion, the Poisson surface, the
+> watertight remesh and the smoothing respond. The animations in this
+> document are recorded from it. 2D slices show the mechanisms; the measured
+> 3D results are in [tuning.md](tuning.md).
+
+| Step | Section | Live demo |
+|---|---|---|
+| find the person in a frame | [2](#2-isolating-the-person-scenebackground-sceneisolation) | [background subtraction](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
+| platform angle of every frame | [3.3](#33-platform-angle-of-every-frame-motion) | [ICP about the axis, axis error, motor model](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
+| views turned back and fused | [3.4](#34-views-fusionviews), [3.6](#36-fusion-fusionsurface) | [turn back, support filter, voxels, surface fit](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
+| points to surface | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 1 | [Poisson and marching squares](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
+| closed mesh | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 3 | [signed distance, ray parity](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
+| smoothing | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 4 | [bilateral normals and reflected rays](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) |
+
 ## 1. Data and coordinate frames
 
 **Recording** (`bodyscan.io.recording`). A capture directory holds `lut.npz`
@@ -44,6 +62,11 @@ reported.
    `edge_jump` towards both neighbours (horizontally or vertically) is dropped.
 5. **Largest cluster** (DBSCAN, `cluster_eps`), statistical outliers removed,
    normals estimated (`normal_radius`) and turned towards the sensor.
+<p align="center">
+  <img src="img/lab/lab_background.gif" alt="One real beam row of the sensor (2048 azimuths, top view) with the person on the platform" width="100%">
+</p>
+<p align="center"><sub>One real beam row of the sensor (2048 azimuths, top view) with the person on the platform. As <code>bg_threshold</code> drops to 0, range noise alone turns beams all over the room into false alarms (red); at the default 5 cm only the person (amber) is left inside the region. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background">▶ try it live</a></b></sub></p>
+
 6. **Incomplete frames**: a frame that received less than `min_columns` of its
    columns (UDP packets), or lost more than `max_person_loss` of the columns
    across the person, is not used. A lost packet elsewhere in the 360 deg sweep does
@@ -77,6 +100,12 @@ the body along the same beams in both, which pulls a registration towards "no
 motion". The estimator therefore works with long baselines and few
 parameters:
 
+<p align="center">
+  <img src="img/lab/lab_icp.gif" alt="Two real chest slices of the scan, 29° apart (grey: target)" width="49%">
+  <img src="img/lab/lab_icpfree.gif" alt="Two real chest slices of the scan, 29° apart (grey: target)" width="49%">
+</p>
+<p align="center"><sub>Two real chest slices of the scan, 29° apart (grey: target). Left: ICP with one unknown, the turn about the axis. Right: free ICP (turn and shift), which converges too but reports a sideways shift that does not exist: part of the turn has been explained as a shift. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles">▶ try it live</a></b></sub></p>
+
 1. **Samples**: one frame every `sample_seconds` (at most `max_samples`).
 2. **Chained angles** (`motion.pairs.chained_angles`): neighbouring samples are
    registered with ONE unknown, the turn about the vertical through the
@@ -88,6 +117,12 @@ parameters:
    per pair and the axis position fitted together (Gauss-Newton, Tukey kernel,
    Schur complement for the shared axis). A wrong axis leaves a shift
    (I - R) e that grows with the turn, so the axis is measured to a few mm.
+<p align="center">
+  <img src="img/lab/lab_axis.gif" alt="Left: the same view turned about the true axis (teal) and about an axis 15 mm off (amber); the shift (I − R) e grows with the turn, which is why long pairs measure the axis" width="49%">
+  <img src="img/lab/lab_motor.gif" alt="Left: the same view turned about the true axis (teal) and about an axis 15 mm off (amber); the shift (I − R) e grows with the turn, which is why long pairs measure the axis" width="49%">
+</p>
+<p align="center"><sub>Left: the same view turned about the true axis (teal) and about an axis 15 mm off (amber); the shift (I − R) e grows with the turn, which is why long pairs measure the axis. Right: the trapezoidal stepper model fitted to the real measured angles of the scan (teal dots), with the residuals below. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles">▶ try it live</a></b></sub></p>
+
 4. **Motion models** (`motion.models`, `motion.fitting`): a stepper model
    (trapezoidal speed profile, ramps, one continuous move or a sequence of
    one-lap moves with short stops, as the MATLAB timer sends them) and a
@@ -116,6 +151,11 @@ turned back by the platform angle about the axis. With per-column timestamps
 every point is turned back by the angle at its own time, so the turn during
 the 0.1 s sweep is undone too.
 
+<p align="center">
+  <img src="img/lab/lab_turnback.gif" alt="Chest slice through the views of the scan: each view first where the sensor saw it, then turned back by its platform angle until all 378 wrap around the body (colour = platform angle)." width="100%">
+</p>
+<p align="center"><sub>Chest slice through the views of the scan: each view first where the sensor saw it, then turned back by its platform angle until all 378 wrap around the body (colour = platform angle). <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion">▶ try it live</a></b></sub></p>
+
 ### 3.5 Corrections (`fusion.corrections`)
 
 Each correction aligns every view against the views of the other groups
@@ -142,6 +182,12 @@ bounded motions:
 4. **Confidence** of every output point: distinct views, points, and their
    spread along the normal (1.4826 x median absolute deviation). The standard
    error of the fitted surface is about 1.25 x spread / √points.
+
+<p align="center">
+  <img src="img/lab/lab_support.gif" alt="Left: the support filter with min_views from 1 to 8; ghosts seen by a single view (red) disappear first" width="49%">
+  <img src="img/lab/lab_surfacefit.gif" alt="Left: the support filter with min_views from 1 to 8; ghosts seen by a single view (red) disappear first" width="49%">
+</p>
+<p align="center"><sub>Left: the support filter with <code>min_views</code> from 1 to 8; ghosts seen by a single view (red) disappear first. Right: view points, voxel averages, then the median surface fit coloured by the spread along the normal. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion">▶ try it live</a></b></sub></p>
 
 ## 4. In-place fusion (`pipelines.inplace`)
 
@@ -180,6 +226,11 @@ the denoising of the cloud, before any mesh exists.
 1. **Reconstruction**: screened Poisson (octree `depth`) on the fused cloud with
    its outward normals. Other methods (`grid` for a single organized frame,
    ball pivoting, alpha shape) leave open surfaces.
+<p align="center">
+     <img src="img/lab/lab_poisson.gif" alt="The Poisson equation solved in 2D on the real slice at arm height, depth 4 to 8 (cells of 50 to 3 mm): the indicator χ (teal inside) and its iso-contour by marching squares" width="100%">
+   </p>
+   <p align="center"><sub>The Poisson equation solved in 2D on the real slice at arm height, <code>depth</code> 4 to 8 (cells of 50 to 3 mm): the indicator χ (teal inside) and its iso-contour by marching squares. Low depth melts the arms into the torso; high depth follows the noise. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson">▶ try it live</a></b></sub></p>
+
 2. **Cleaning and orientation** (`meshing.cleanup`): degenerate, duplicated and
    non-manifold elements removed; the winding made consistent across every
    shared edge (breadth-first), then each connected piece turned so that most
@@ -203,6 +254,11 @@ the denoising of the cloud, before any mesh exists.
    bubbles smaller than 1 % are dropped; `clip_below` cuts flat soles.
    An optional quadric decimation (`target_edge_mm`) reduces the triangle
    count; it leaves kinks, which `smooth` then removes.
+<p align="center">
+     <img src="img/lab/lab_watertight.gif" alt="Signed distance on a 4 mm grid around the real mesh contours at z = 1.10 m, with the arm moved towards the torso: when the gap falls to about one grid cell the two contours merge" width="100%">
+   </p>
+   <p align="center"><sub>Signed distance on a 4 mm grid around the real mesh contours at z = 1.10 m, with the arm moved towards the torso: when the gap falls to about one grid cell the two contours merge. The ray from the white point counts crossings: odd means inside. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight">▶ try it live</a></b></sub></p>
+
 4. **Smoothing** (`bodyscan smooth`, `meshing.smoother`, `meshing.smoothing`):
    Sionna RT reflects a ray on the plane of the triangle it hits (face
    normal). A triangle of edge L whose vertices have an error σ along the
@@ -235,6 +291,11 @@ the denoising of the cloud, before any mesh exists.
    and leaves small dimples, which the finer one removes. Only vertices
    move: the mesh stays closed and manifold. The distance from the input
    surface is measured after every round and reported.
+<p align="center">
+     <img src="img/lab/lab_smoothing.gif" alt="The real side profile of the pepito mesh (vertical cut, chest on the right; deviations magnified × 15) smoothed with scale_mm 12 and 0 to 12 rounds" width="100%">
+   </p>
+   <p align="center"><sub>The real side profile of the <code>pepito</code> mesh (vertical cut, chest on the right; deviations magnified × 15) smoothed with <code>scale_mm</code> 12 and 0 to 12 rounds. Parallel rays from the right are reflected on the facets; their colour is the ray error caused by facet noise. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing">▶ try it live</a></b></sub></p>
+
 5. **Quality report** (`meshing.quality`):
 
    | Measure | Meaning |

@@ -101,7 +101,7 @@ Why the last step matters: at 60 GHz the wavelength is 5 mm, and a surface looks
 
 <p align="center"><sub>The smoothed mesh of <code>pepito</code>. It is also in <a href="docs/models/person_pepito_smooth_preview.stl"><code>docs/models/person_pepito_smooth_preview.stl</code></a>: GitHub opens it in a 3D viewer you can rotate (60,000 triangles, decimated for the preview).</sub></p>
 
-The commands of these four steps, with all their options, are in [Usage](#usage); how each step works is in [docs/algorithms.md](docs/algorithms.md).
+The commands of these four steps, with all their options, are in [Usage](#usage). How each step works: [docs/algorithms.md](docs/algorithms.md), with an animation of every algorithm, and the **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)**, where you can run them on real data and move every parameter.
 
 ---
 
@@ -434,11 +434,12 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 
 | Document | Read it for |
 |---|---|
+| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline as a live simulation on real data: background subtraction, registration about the axis, motor model, fusion, Poisson, watertight remesh, smoothing |
 | [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |
 | [docs/parameters.md](docs/parameters.md) | every parameter of every command (generated from the code) |
-| [docs/algorithms.md](docs/algorithms.md) | how the processing works, step by step |
+| [docs/algorithms.md](docs/algorithms.md) | how the processing works, step by step, with animations of every step |
 | [docs/architecture.md](docs/architecture.md) | how the code is organised and how to extend it |
 | [CHANGELOG.md](CHANGELOG.md) | the history of the versions |
 
@@ -448,7 +449,7 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 |---|---|
 | `bodyscan/` | the Python package (run as `python -m bodyscan COMMAND`) |
 | `configs/` | configuration files: full defaults of every command, and variants |
-| `docs/` | technical documentation, the pictures and animations of this page (`docs/img`), the interactive tour (`docs/viewer`) and a 3D preview (`docs/models`) |
+| `docs/` | technical documentation, the pictures and animations of this page (`docs/img`), the interactive tour (`docs/viewer`), the Algorithm Lab (`docs/lab`) and a 3D preview (`docs/models`) |
 | `matlab/` | `bodyscan.m` (runs a command with MATLAB's Python), `girogirotondo_timer.m` (platform from the other PC) |
 | `tests/` | unit and end-to-end tests on synthetic data |
 | `legacy/` | the single-file scripts this package replaces, kept to reproduce earlier results |

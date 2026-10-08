@@ -1,5 +1,19 @@
 # Changelog
 
+## Documentation (2026-10-08)
+
+- `docs/lab/index.html`, the Algorithm Lab: the static pipeline as live 2D
+  simulations on slices of the real scan tt9 (background subtraction on a
+  real beam row; ICP about the axis against free ICP; axis error; stepper
+  model fitted to the measured angles; views turned back; support filter,
+  voxel averaging and median surface fit; Poisson and marching squares;
+  signed distance, ray parity and gap sealing; bilateral normal smoothing
+  with reflected rays and facet-tilt metrics).
+- docs/algorithms.md: an animation recorded from the Lab in every section,
+  with a link to the live demo; docs/tuning.md: parameter to demo table.
+- The facet tilt from vertex noise is √2 σ / L (rms), not 2 σ / L: corrected
+  in docs/algorithms.md and in the docstring of `meshing.smoothing`.
+
 ## Documentation (2026-10-07)
 
 - Story animation and tour: the wait on the platform before the motor starts
