@@ -15,12 +15,13 @@ names the module that implements it; the parameters are in
 
 | Step | Section | Live demo |
 |---|---|---|
-| find the person in a frame | [2](#2-isolating-the-person-scenebackground-sceneisolation) | [background subtraction](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
+| find the person in a frame | [2](#2-isolating-the-person-scenebackground-sceneisolation) | [the whole chain on a real frame, the threshold](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background) |
 | platform angle of every frame | [3.3](#33-platform-angle-of-every-frame-motion) | [ICP about the axis, axis error, motor model](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles) |
 | views turned back and fused | [3.4](#34-views-fusionviews), [3.6](#36-fusion-fusionsurface) | [turn back, support filter, voxels, surface fit](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#fusion) |
 | points to surface | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 1 | [Poisson and marching squares](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#poisson) |
 | closed mesh | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 3 | [signed distance, ray parity](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight) |
-| smoothing | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 4 | [bilateral normals and reflected rays](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) |
+| smoothing | [5](#5-meshing-pipelinesmesh-pipelinessmooth-meshing), step 4 | [one round step by step, reflection lines on the real chest, reflected rays](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing) |
+| rotating objects and people | [6](#6-detection-pipelinesdetect-detection) | [rotation test and person cascade on real objects](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection) |
 
 ## 1. Data and coordinate frames
 
@@ -66,6 +67,32 @@ reported.
   <img src="img/lab/lab_background.gif" alt="One real beam row of the sensor (2048 azimuths, top view) with the person on the platform" width="100%">
 </p>
 <p align="center"><sub>One real beam row of the sensor (2048 azimuths, top view) with the person on the platform. As <code>bg_threshold</code> drops to 0, range noise alone turns beams all over the room into false alarms (red); at the default 5 cm only the person (amber) is left inside the region. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background">▶ try it live</a></b></sub></p>
+
+**Why background subtraction alone is not enough, and what removes the
+false alarms.** In frame 300 of run tt9, 8,214 pixels are closer than the
+empty room; 5,033 of them are the person. The other 3,181 come from what
+changed after the empty room was recorded (near the PC the operator left,
+probably the chair), pixels where the empty room returned nothing (588,
+dark or far surfaces), reflections below the floor and range noise at
+grazing angles. Each later test uses a property the false alarms lack:
+
+| test | property used | removed in frame 300 |
+|---|---|---|
+| region (cylinder of `radius` around the axis, 5 cm to 2.3 m) | where the person must be | 2,798 |
+| mixed pixels (`edge_jump`) | a range between two surfaces | 124 |
+| largest DBSCAN cluster (`cluster_eps`) | a body is one connected object | 9 |
+| statistical outliers (20 neighbours, 2 σ) | local density | 250 |
+
+What survives in one frame is checked again across frames by the support
+filter of the fusion (section 3.6): a point needs neighbours from at least
+`min_views` views of its lap, so a ghost of a single frame never reaches the
+fused cloud.
+
+<p align="center">
+  <img src="img/lab/lab_chain.gif" alt="The isolation chain on a real frame" width="100%">
+</p>
+<p align="center"><sub>The isolation chain on frame 300 of run tt9 (top view): all returns, candidates closer than the empty room, then each test removing its share (red) until only the person (teal) is left. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#background">▶ try it live</a></b></sub></p>
+
 
 6. **Incomplete frames**: a frame that received less than `min_columns` of its
    columns (UDP packets), or lost more than `max_person_loss` of the columns
@@ -143,6 +170,25 @@ parameters:
    model-free solution when they agree within `model_agreement` (their errors
    are partly independent), else the model-free solution. The angle plot
    (`<out>_angle.png`) shows every solution and the residuals.
+
+**How the registrations and the motor model work together.** ICP never
+gives an angle, only the turn between two frames, θ(tᵢ) − θ(tⱼ). The angles
+of all frames come from a least-squares fit of a curve to all these
+differences, and each kind of pair fixes a different error: chained pairs
+carry noise that integrates into a random walk and a bias (partial views
+read every turn 1 to 3 % short) that accumulates; long pairs remove the
+random walk but share the bias; revisit pairs, whole laps apart, are exact
+in whole laps and calibrate the bias; the motor model (a curve with a few
+parameters plus a smooth correction) fills the places where pairs are weak
+or missing. In a simulation with the profile of this scan, chained pairs
+alone end 27° short after 3.7 laps (rms error 15°), long pairs bring it to
+10°, revisits to 0.2°.
+
+<p align="center">
+  <img src="img/lab/lab_joint.gif" alt="Pair measurements and motor model" width="100%">
+</p>
+<p align="center"><sub>Simulation on a known truth with the stepper profile of this scan: the arcs are the registered pairs; the curves are the error of each solution as the kinds of pairs are added (chained, long, revisits, motor model). <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#angles">▶ try it live</a></b></sub></p>
+
 
 ### 3.4 Views (`fusion.views`)
 
@@ -255,9 +301,9 @@ the denoising of the cloud, before any mesh exists.
    An optional quadric decimation (`target_edge_mm`) reduces the triangle
    count; it leaves kinks, which `smooth` then removes.
 <p align="center">
-     <img src="img/lab/lab_watertight.gif" alt="Signed distance on a 4 mm grid around the real mesh contours at z = 1.10 m, with the arm moved towards the torso: when the gap falls to about one grid cell the two contours merge" width="100%">
+     <img src="img/lab/lab_watertight.gif" alt="Watertight remesh step by step" width="100%">
    </p>
-   <p align="center"><sub>Signed distance on a 4 mm grid around the real mesh contours at z = 1.10 m, with the arm moved towards the torso: when the gap falls to about one grid cell the two contours merge. The ray from the white point counts crossings: odd means inside. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight">▶ try it live</a></b></sub></p>
+   <p align="center"><sub>The watertight remesh step by step on the real mesh contours at z = 1.10 m: the grid, the distance to the surface, the sign by rays sweeping the grid (odd number of crossings: inside), the closed contour extracted at distance 0, then the arm moved towards the torso until the gap is about one cell and the contours merge. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#watertight">▶ try it live</a></b></sub></p>
 
 4. **Smoothing** (`bodyscan smooth`, `meshing.smoother`, `meshing.smoothing`):
    Sionna RT reflects a ray on the plane of the triangle it hits (face
@@ -291,7 +337,14 @@ the denoising of the cloud, before any mesh exists.
    and leaves small dimples, which the finer one removes. Only vertices
    move: the mesh stays closed and manifold. The distance from the input
    surface is measured after every round and reported.
-<p align="center">
+
+   <p align="center">
+     <img src="img/lab/lab_smoothstep.gif" alt="Smoothing step by step" width="49%">
+     <img src="img/lab/lab_zebra.gif" alt="Reflection lines on the real chest" width="49%">
+   </p>
+   <p align="center"><sub>Left: one round step by step on a profile with stripes, noise and a crease (filter the normals, vertex passes, restore the area; deviations magnified). Right: reflection lines on the real chest patch (29,421 triangles), raw, then 12 mm × 1, × 2, + 2 finishing rounds at 6 mm (level 4), × 4: the scan-row stripes stop breaking the reflections. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing">▶ try it live</a></b></sub></p>
+
+   <p align="center">
      <img src="img/lab/lab_smoothing.gif" alt="The real side profile of the pepito mesh (vertical cut, chest on the right; deviations magnified × 15) smoothed with scale_mm 12 and 0 to 12 rounds" width="100%">
    </p>
    <p align="center"><sub>The real side profile of the <code>pepito</code> mesh (vertical cut, chest on the right; deviations magnified × 15) smoothed with <code>scale_mm</code> 12 and 0 to 12 rounds. Parallel rays from the right are reflected on the facets; their colour is the ray error caused by facet noise. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#smoothing">▶ try it live</a></b></sub></p>
@@ -352,6 +405,12 @@ the denoising of the cloud, before any mesh exists.
 7. **Centres**: the rotation axis for a rotating object; for a person that
    does not rotate, the centroid of the visible surface moved away from the
    sensor by `body_radius` (a few cm).
+
+<p align="center">
+  <img src="img/lab/lab_rotation.gif" alt="Rotation test and person cascade" width="49%">
+  <img src="img/lab/lab_cascade.gif" alt="Rotation test and person cascade" width="49%">
+</p>
+<p align="center"><sub>Left: the rotation test on real frames of the person on the platform (tt9): each pair's turn and shift give an axis c = (I − R)⁻¹ t; the 28 axes agree within 9 mm and the median lies 4 mm from the axis of the fusion. A synthetic walking track gives axes 0.56 m apart and is rejected. Right: the silhouettes (occupancy images) of the person and of real objects of the lab with the rectangles of a Haar-like feature; the person passes with a shape score of 0.95, every object is rejected by one of the stages. <b><a href="https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html#detection">▶ try it live</a></b></sub></p>
 
 Measured on the lab subsets tt13, tt14 and tt15 (objects mode, no empty
 scene): the person was the only object selected, out of 42 to 46 tracked

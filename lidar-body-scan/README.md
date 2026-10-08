@@ -434,7 +434,7 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 
 | Document | Read it for |
 |---|---|
-| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline as a live simulation on real data: background subtraction, registration about the axis, motor model, fusion, Poisson, watertight remesh, smoothing |
+| **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every algorithm of the static pipeline and of the detector as a live simulation on real data: isolating the person, registration and motor model, fusion, Poisson, watertight remesh, smoothing (with reflection lines in 3D), rotating objects and the person cascade |
 | [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |

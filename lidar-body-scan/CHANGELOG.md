@@ -1,5 +1,18 @@
 # Changelog
 
+## Documentation (2026-10-08, second pass)
+
+- Algorithm Lab: the whole isolation chain on a real frame (why background
+  subtraction alone leaves false alarms and which test removes them); how
+  the registrations and the motor model work together (simulation on a known
+  truth: chained, long and revisit pairs, motor model); the watertight
+  remesh step by step (grid, distance, sign by ray parity with an animated
+  sweep, extraction, a hole and the majority of 5 rays); smoothing step by
+  step with the filter window and weights, and reflection lines on a real
+  chest patch smoothed live in 3D; a new chapter on `detect`: the rotation
+  test and the person cascade, computed by the package on real data.
+- docs/algorithms.md: the same additions as text and animations.
+
 ## Documentation (2026-10-08)
 
 - `docs/lab/index.html`, the Algorithm Lab: the static pipeline as live 2D
