@@ -94,6 +94,10 @@ class TrackConfig:
     hidden_continuity: float = param(10.0, "the continuity weight of a joint whose body part is less than 30 % "
                                            "visible is multiplied by up to 1 + this (fully hidden): a hidden limb "
                                            "keeps its motion instead of jumping where a few points pull it")
+    relax_hidden_arms: float = param(0.1, "weight pulling the shoulder and elbow of an arm the sensor does not see "
+                                          "towards hanging [per rad^2], times how hidden it is (0 when 30 % or "
+                                          "more of it is seen): an arm nobody sees is most likely hanging",
+                                     effect="larger: a hidden arm drops faster; 0: it keeps its last pose")
     rounds: int = param(3, "correspondence rounds per frame")
     iterations: int = param(12, "L-BFGS iterations per round")
     coarse_scale: float = param(4.0, "robust scale of the first round, as a multiple of robust_scale (halved every "
@@ -261,7 +265,17 @@ class Tracker:
         self.part_labels = labels
         self.part_count = np.bincount(labels, minlength=len(skeleton.PART_NAMES))
         lower, upper = skeleton.limit_arrays()
-        self.start_body = np.clip(avatar.scan_body, lower[skeleton.BODY], upper[skeleton.BODY])
+        # start from the scan pose with the arms hanging: the scan's A-pose would stay on an arm
+        # the sensor never sees
+        self.hanging = {}
+        for side in ("left", "right"):
+            self.hanging.update(_arm_rotations(side, *ARM_STARTS[1]))
+        start = np.array(avatar.scan_body, dtype=np.float64).reshape(21, 3).copy()
+        for index, value in self.hanging.items():
+            start[index] = value
+        self.start_body = np.clip(start, lower[skeleton.BODY], upper[skeleton.BODY])
+        self.hanging_index = np.array(sorted(self.hanging))
+        self.hanging_body = np.array([self.hanging[i] for i in self.hanging_index])
         segmentation = segmented.summary.get("config", {})
         self.foreground_margin = float(segmentation.get("bg_threshold", 0.08)) + 0.02
         self.background_range = segmented.background_range                # (H, W) empty room [m], NaN: unknown
@@ -426,12 +440,17 @@ class Tracker:
             seen = self.joint_seen(match.visible)[1:]                  # the 21 body joints
             continuity = torch.as_tensor(1.0 + c.hidden_continuity * self.hidden_factor(seen), dtype=dt,
                                          device=dev).reshape(1, 21, 1)
+            relax = torch.as_tensor(c.relax_hidden_arms * self.hidden_factor(seen)[self.hanging_index], dtype=dt,
+                                    device=dev).reshape(1, -1, 1)
+            hanging = torch.as_tensor(self.hanging_body, dtype=dt, device=dev).reshape(1, -1, 3)
 
             def total():
                 vertices, _ = self.pose(omega, reference_t, pos, b)
                 energy = self.frame_energy(vertices[0], frame, match, scale=scale)
                 energy = energy + c.limit_weight * limit_penalty(b)
                 energy = energy + c.twist_weight * (b[:, TWIST_JOINTS, 1] ** 2).sum()
+                if c.relax_hidden_arms > 0:
+                    energy = energy + (((b[:, self.hanging_index] - hanging) ** 2) * relax).sum()
                 if prediction is not None:
                     energy = energy + c.pose_continuity * (((b - pred_body) ** 2) * continuity).sum()
                     energy = energy + c.root_continuity * (((omega[0] - pred_omega) ** 2).sum()
@@ -459,7 +478,8 @@ class Tracker:
 
     def explain(self, rotation, position, body, frame: FrameData) -> dict:
         """How well a pose explains a frame: the distance of every point to the visible body, the
-        fraction of points farther than recover_distance ('unexplained'), and a score (lower is
+        fraction of points between recover_distance and max_correspondence ('unexplained': farther
+        points are clutter no limb can reach), and a score (lower is
         better): the mean point distance, each capped at 0.15 m, plus 0.15 m times the fraction of
         the visible vertices that lie where the sensor saw through."""
         import torch
@@ -473,7 +493,10 @@ class Tracker:
         match = self.match(vertices[0].cpu().numpy().astype(np.float64), normals[0].cpu().numpy().astype(np.float64),
                            frame)
         distance = match.distance
-        far = distance > self.config.tracking.recover_distance
+        c = self.config.tracking
+        # points beyond max_correspondence are clutter (no limb can reach them): never a reason
+        # to search the limbs again
+        far = (distance > c.recover_distance) & (distance < c.max_correspondence)
         return {"distance": distance, "unexplained": float(np.mean(far)), "unexplained_count": int(far.sum()),
                 "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * len(match.silhouette) / match.visible_count),
                 "visible": match.visible}
@@ -833,6 +856,7 @@ class Tracker:
         residual_median = np.zeros(frames)
         residual_p90 = np.zeros(frames)
         unexplained = np.zeros(frames)
+        clutter = np.zeros(frames)
         violation = np.zeros(frames)
         floor = np.zeros(frames)
         joints_out = np.zeros((frames, skeleton.NUM_JOINTS, 3), dtype=np.float32)
@@ -859,7 +883,9 @@ class Tracker:
                                                 visible_faces(self.faces_np, match.visible))
                 residual_median[k] = np.median(distance)
                 residual_p90[k] = np.percentile(distance, 90)
-                unexplained[k] = np.mean(distance > 0.05)
+                reach = self.config.tracking.max_correspondence
+                unexplained[k] = np.mean((distance > 0.05) & (distance < reach))
+                clutter[k] = np.mean(distance >= reach)
                 violation[k] = len(match.silhouette) / match.visible_count
                 floor[k] = v[self.feet_np, 2].min()
                 # observed: visible vertices with a point of the person within 2 robust scales
@@ -871,7 +897,7 @@ class Tracker:
                     observed[k] = np.bincount(self.part_labels[seen], minlength=parts) / np.maximum(self.part_count, 1)
         observed[:, self.part_count == 0] = np.nan                     # parts without vertices in this body
         return {"joints": joints_out, "residual_median": residual_median, "residual_p90": residual_p90,
-                "unexplained": unexplained, "silhouette_violation": violation, "floor": floor,
+                "unexplained": unexplained, "clutter": clutter, "silhouette_violation": violation, "floor": floor,
                 "limit_excess_deg": excess, "observed": observed}
 
 
@@ -881,7 +907,8 @@ class Tracker:
 
 def flag_frames(quality: dict, contacts: np.ndarray, times: np.ndarray) -> dict:
     """Frames that need a look: points far from the body (most of them, or more
-    than 5 % of them: a limb in the wrong place), body in free space, feet
+    than 5 % of them within reach of a limb: a limb in the wrong place; points
+    beyond max_correspondence are clutter and not counted), body in free space, feet
     below the floor or sliding while standing, joint limits exceeded, sudden
     accelerations."""
     joints = quality["joints"][:, list(skeleton.MAIN_JOINTS)].astype(np.float64)
@@ -926,6 +953,7 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
         "observed_fraction_per_part": {name: float(np.nanmean(observed[:, k])) for k, name in
                                        enumerate(skeleton.PART_NAMES) if np.isfinite(observed[:, k]).any()},
         "flagged_frames": flags["counts"],
+        "clutter_fraction_mean": float(np.mean(quality["clutter"])) if "clutter" in quality else 0.0,
         "contact_fraction": {"left": float(contacts[:, 0].mean()), "right": float(contacts[:, 1].mean())},
         **(extra or {}),
     }
@@ -934,6 +962,7 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
                         frame_index=result["frame_index"], joints=quality["joints"], contacts=contacts,
                         observed=observed.astype(np.float32), residual_median=quality["residual_median"],
                         residual_p90=quality["residual_p90"], unexplained=quality["unexplained"],
+                        clutter=quality.get("clutter", np.zeros_like(quality["unexplained"])),
                         silhouette_violation=quality["silhouette_violation"],
                         floor=quality["floor"], limit_excess_deg=quality["limit_excess_deg"], flags=flags["flags"],
                         flag_names=np.array(flags["flag_names"]), avatar=str(avatar_path), model=avatar.model_path,

@@ -712,6 +712,7 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--pose-continuity` | `0.05` | weight of the joint rotations staying near the prediction (constant velocity) [per rad^2] | larger: steadier hidden limbs, slower to follow fast motion |
 | `--root-continuity` | `0.02` | weight of the root staying near the prediction |  |
 | `--hidden-continuity` | `10.0` | the continuity weight of a joint whose body part is less than 30 % visible is multiplied by up to 1 + this (fully hidden): a hidden limb keeps its motion instead of jumping where a few points pull it |  |
+| `--relax-hidden-arms` | `0.1` | weight pulling the shoulder and elbow of an arm the sensor does not see towards hanging [per rad^2], times how hidden it is (0 when 30 % or more of it is seen): an arm nobody sees is most likely hanging | larger: a hidden arm drops faster; 0: it keeps its last pose |
 | `--tracking-rounds` | `3` | correspondence rounds per frame |  |
 | `--tracking-iterations` | `12` | L-BFGS iterations per round |  |
 | `--coarse-scale` | `4.0` | robust scale of the first round, as a multiple of robust_scale (halved every round down to robust_scale) | larger: catches faster limbs, but stray points pull more in the first round |

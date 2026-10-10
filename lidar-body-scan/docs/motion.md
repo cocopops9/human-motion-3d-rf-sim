@@ -162,6 +162,7 @@ points. The terms:
 | twist | the twist of the spine and the rotation of the thighs about their own axis stay small (weak, `--twist-weight`): otherwise the pelvis can turn while the trunk and the legs turn back by as much, which the points hardly tell apart |
 | floor | no foot vertex below the floor |
 | continuity | joint rotations and root close to the prediction; weak for what the sensor sees, up to 11 times stronger for a body part seen less than 30 % (`--hidden-continuity`), so that a hidden limb keeps its motion instead of jumping wherever a few points pull it |
+| hidden arms | an arm seen less than 30 % is pulled slowly towards hanging (`--relax-hidden-arms`, 0 to switch off): an arm nobody sees is most likely hanging; tracking starts with the arms hanging, so that the scan's A-pose does not stay on an arm the sensor never sees |
 
 The first frame is fitted from 8 facing directions; a frame whose points lie
 more than `--lost-residual` (5 cm, median) from the body is fitted again from
@@ -197,8 +198,11 @@ observed, the point residuals and the review flags. `<out>.json` summarises
 it.
 
 Flags (a frame can have several): `residual` (points more than 3 cm from the
-body, median), `unexplained` (more than 5 % of the points farther than 5 cm
-from the body: a limb in the wrong place), `free_space` (more than 5 % of the
+body, median), `unexplained` (more than 5 % of the points between 5 cm
+and `max_correspondence`, 25 cm, from the body: a limb in the wrong place;
+farther points are clutter no limb can reach, reported as
+`clutter_fraction_mean` in the summary and never a reason to search the
+limbs again), `free_space` (more than 5 % of the
 visible vertices where the sensor saw through), `below_floor` (a foot 2 cm
 below the floor), `sliding` (a standing foot moving faster than 0.3 m/s),
 `joint_limits` (a limit exceeded by more than 10 deg), `acceleration` (a

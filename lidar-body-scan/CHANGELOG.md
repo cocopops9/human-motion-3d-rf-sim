@@ -1,5 +1,19 @@
 # Changelog
 
+## Tracking: clutter and hidden arms (2026-10-10)
+
+- `track`: points farther than `max_correspondence` (25 cm) from the body are
+  clutter: they no longer count as unexplained, trigger no limb search and no
+  `unexplained` flag; their mean fraction is `clutter_fraction_mean` in the
+  summary and `clutter` in the motion file. On a real take with debris in the
+  segmentation the old count made the tracker bend limbs towards it.
+- `track`: tracking starts with the arms hanging instead of the scan's A-pose,
+  and an arm seen less than 30 % is pulled slowly towards hanging
+  (`--relax-hidden-arms`, default 0.1, 0 to switch off): a hidden arm no
+  longer stays raised for the whole take.
+- Synthetic benchmark (test body, default settings): walk MPJPE mean
+  25.6 to 21.2 mm, max 53.7 to 41.6 mm; jump unchanged (14.0 and 14.3 mm).
+
 ## Documentation (2026-10-08, third pass)
 
 - Algorithm Lab reorganised in the order the commands run, eight chapters:
