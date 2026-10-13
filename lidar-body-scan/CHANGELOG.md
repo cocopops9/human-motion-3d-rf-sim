@@ -1,5 +1,12 @@
 # Changelog
 
+## Audible beeps through earbuds (2026-10-13)
+
+- Beeps are queued and played one after the other, each at least 350 ms
+  (`--beep-min-ms`); a faint wake pulse precedes a beep after a pause
+  (`--no-beep-wake` to disable). Hypothesis: wireless earbuds clip the start
+  of short sounds; not yet confirmed on the user's earbuds.
+
 ## check-take, lost columns per packet (2026-10-13)
 
 - New command `check-take TAKE SEGMENTS`: columns received per frame, which

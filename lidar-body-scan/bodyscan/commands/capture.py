@@ -43,12 +43,16 @@ class CaptureCommand(ConfiguredCommand):
         config = self.prepare(args)
         if config is None:
             return 0
+        from bodyscan.capture import cues
         from bodyscan.capture.sensor import OusterSource
         from bodyscan.capture.session import Session
         from bodyscan.capture.writer import RunDirectory
         out = Path(args.out)
         if out.exists() and any(out.iterdir()):
             raise SystemExit(f"{out} is not empty; choose a new directory to avoid mixing runs")
+        timing = getattr(config, "timing", None)
+        if timing is not None:
+            cues.configure(timing.beep_min_ms, timing.beep_wake)
         origin = time.monotonic()
         devices = self.open_devices(config, origin)
         source = run_directory = None

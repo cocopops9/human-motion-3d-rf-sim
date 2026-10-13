@@ -31,6 +31,11 @@ class CountdownConfig:
     background_seconds: float = param(3.0, "empty-scene recording at the start (nobody near the platform or "
                                            "the mark)", unit="s")
     delay: float = param(15.0, "countdown to take position and pose", unit="s")
+    beep_min_ms: float = param(350.0, "shortest beep: earbuds and speakers cut the start of a short sound", unit="ms")
+    beep_wake: bool = param(True, "a faint pulse near the limit of hearing before a beep that follows a pause of "
+                                  "a second or more: wireless earbuds go to sleep between cues and cut the "
+                                  "start of the next sound",
+                            effect="off (--no-beep-wake): if the pulse is audible and annoying")
 
 
 @dataclass

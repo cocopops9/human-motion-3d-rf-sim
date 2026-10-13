@@ -109,6 +109,11 @@ screen, so every step has its beeps:
 | 1 long | the last `--hold` s | A-pose, stand still |
 | 2 | end | done |
 
+Beeps are played one after the other and each lasts at least `--beep-min-ms` (350 ms).
+Wireless earbuds go to sleep between cues and cut the start of a short sound, so
+after a pause of a second a faint 18 kHz pulse is played first (`--no-beep-wake`
+turns it off if you hear it). Wired headphones or speakers need neither.
+
 Without `--duration` (recording until ENTER) only the cues up to "move" are
 given: stand 3 s in the A-pose before pressing ENTER. The empty room must
 really be empty: a person in it becomes part of the background and is erased

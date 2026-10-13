@@ -240,3 +240,18 @@ class SessionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_cue_queue_plays_in_order_with_minimum_length_and_wake_pulse(monkeypatch):
+    from bodyscan.capture import cues
+    played = []
+    monkeypatch.setattr(cues, "_REAL_AUDIO", True)
+    monkeypatch.setattr(cues, "_play", lambda f, d: played.append((f, d)))
+    monkeypatch.setitem(cues._state, "last", 0.0)
+    cues.configure(350.0, True)
+    cues.beep_pattern((440, 100), (880, 500))
+    cues.flush(5.0)
+    cues.configure(350.0, False)
+    assert played[0] == (cues.WAKE_HZ, cues.WAKE_MS)          # idle audio: wake pulse first
+    assert played[1:] == [(440, 350.0), (880, 500)]           # order kept, short beep lengthened
+    cues.configure(350.0, True)

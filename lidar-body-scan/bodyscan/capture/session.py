@@ -31,25 +31,8 @@ import time
 import numpy as np
 
 from bodyscan import __version__
-from bodyscan.capture.cues import EnterListener, beep
+from bodyscan.capture.cues import EnterListener, beep, beep_pattern, flush
 from bodyscan.log import info, warning
-
-
-def _later(seconds: float, frequency: float, duration_ms: float) -> None:
-    """A beep after a short delay, without blocking the scan loop (beep patterns)."""
-    import threading
-    threading.Timer(seconds, beep, args=(frequency, duration_ms)).start()
-
-
-def beep_pattern(*tones) -> None:
-    """Beeps (frequency, duration_ms) one after the other, 0.15 s apart."""
-    at = 0.0
-    for frequency, duration_ms in tones:
-        if at == 0.0:
-            beep(frequency, duration_ms)
-        else:
-            _later(at, frequency, duration_ms)
-        at += duration_ms / 1000.0 + 0.15
 
 
 class Phase:
@@ -102,8 +85,7 @@ class Background(Phase):
     store = "background"
 
     def begin(self, session, t):
-        beep(440, 300)
-        _later(0.45, 440, 300)
+        beep_pattern((440, 300), (440, 300))
         super().begin(session, t)
 
 
@@ -369,9 +351,8 @@ class Session:
             if phase is not None:
                 phase.end(self, self.last_time)
         finally:
-            beep(1200, 200)
-            time.sleep(0.3 if self.interactive else 0.0)
-            beep(1200, 200)
+            beep_pattern((1200, 200), (1200, 200))
+            flush(3.0)
             info("[done] writing the remaining frames ...")
         self.log.update(self.run_directory.counts)
         return self.log
