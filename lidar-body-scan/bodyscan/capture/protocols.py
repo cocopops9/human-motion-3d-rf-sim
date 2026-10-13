@@ -36,6 +36,11 @@ class CountdownConfig:
                                   "a second or more: wireless earbuds go to sleep between cues and cut the "
                                   "start of the next sound",
                             effect="off (--no-beep-wake): if the pulse is audible and annoying")
+    beep_backend: str = param("auto", "how beeps are played: 'stream' keeps one audio stream open for the whole "
+                                      "capture (needs: pip install sounddevice), so Bluetooth earbuds never fall "
+                                      "asleep between beeps; 'winsound' opens the audio device for each beep; "
+                                      "'auto' = stream when sounddevice is installed",
+                              choices=("auto", "stream", "winsound"))
 
 
 @dataclass

@@ -248,10 +248,39 @@ def test_cue_queue_plays_in_order_with_minimum_length_and_wake_pulse(monkeypatch
     monkeypatch.setattr(cues, "_REAL_AUDIO", True)
     monkeypatch.setattr(cues, "_play", lambda f, d: played.append((f, d)))
     monkeypatch.setitem(cues._state, "last", 0.0)
-    cues.configure(350.0, True)
+    cues.configure(350.0, True, "winsound")
     cues.beep_pattern((440, 100), (880, 500))
     cues.flush(5.0)
     cues.configure(350.0, False)
     assert played[0] == (cues.WAKE_HZ, cues.WAKE_MS)          # idle audio: wake pulse first
     assert played[1:] == [(440, 350.0), (880, 500)]           # order kept, short beep lengthened
-    cues.configure(350.0, True)
+    cues.configure(350.0, True, "auto")
+    cues.close()
+
+
+def test_tone_stream_mixes_beeps_into_an_open_stream():
+    import numpy as np
+    from bodyscan.capture import cues
+
+    class FakeStream:
+        def __init__(self, samplerate, channels, dtype, callback):
+            self.callback = callback
+        def start(self): pass
+        def stop(self): pass
+        def close(self): pass
+
+    class FakeSoundDevice:
+        OutputStream = FakeStream
+        @staticmethod
+        def query_devices(kind):
+            return {"name": "fake", "default_samplerate": 1000.0}
+
+    stream = cues.ToneStream(FakeSoundDevice)
+    out = np.zeros((300, 1), dtype=np.float32)
+    stream.stream.callback(out, 300, None, None)
+    assert np.abs(out).max() < 1e-3                          # idle: only the inaudible floor
+    stream.tone(100.0, 200.0, gap_s=0.05)                    # 200 + 50 samples
+    stream.stream.callback(out, 300, None, None)
+    assert np.abs(out[20:180]).max() > 0.3                   # the beep
+    assert np.abs(out[260:]).max() < 1e-3                    # gap and floor after it
+    assert not stream.busy()

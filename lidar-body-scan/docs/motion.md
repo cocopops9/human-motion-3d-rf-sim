@@ -110,9 +110,15 @@ screen, so every step has its beeps:
 | 2 | end | done |
 
 Beeps are played one after the other and each lasts at least `--beep-min-ms` (350 ms).
-Wireless earbuds go to sleep between cues and cut the start of a short sound, so
-after a pause of a second a faint 18 kHz pulse is played first (`--no-beep-wake`
-turns it off if you hear it). Wired headphones or speakers need neither.
+With Bluetooth earbuds, install sounddevice (`pip install sounddevice`): one audio
+stream then stays open for the whole capture and the earbuds never suspend the
+link between beeps (`--beep-backend stream`). Without it, each beep opens the audio
+device again and Bluetooth earbuds can swallow the first beeps. Check before a
+session, without the sensor:
+
+    python -m bodyscan test-beeps
+
+It plays the cues one by one with their numbers on screen.
 
 Without `--duration` (recording until ENTER) only the cues up to "move" are
 given: stand 3 s in the A-pose before pressing ENTER. The empty room must

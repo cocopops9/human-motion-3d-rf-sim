@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bodyscan.capture.protocols import (InPlaceCaptureConfig, TurntableCaptureConfig, frames_per_second,
                                         inplace_phases, turntable_log, turntable_phases)
-from bodyscan.commands.base import ConfiguredCommand
+from bodyscan.commands.base import Command, ConfiguredCommand
 from bodyscan.log import info
 
 
@@ -52,7 +52,7 @@ class CaptureCommand(ConfiguredCommand):
             raise SystemExit(f"{out} is not empty; choose a new directory to avoid mixing runs")
         timing = getattr(config, "timing", None)
         if timing is not None:
-            cues.configure(timing.beep_min_ms, timing.beep_wake)
+            cues.configure(timing.beep_min_ms, timing.beep_wake, timing.beep_backend)
         origin = time.monotonic()
         devices = self.open_devices(config, origin)
         source = run_directory = None
@@ -71,6 +71,7 @@ class CaptureCommand(ConfiguredCommand):
             if source is not None:
                 source.close()
             self.close_devices(devices)
+            cues.close()
             if run_directory is not None:
                 run_directory.close(log)
         info(self.summary(log))
@@ -142,3 +143,43 @@ class CaptureInPlace(CaptureCommand):
 
     def extra_log(self, config, devices):
         return {"duration": config.stepping.duration, "cue_every": config.stepping.cue_every}
+
+
+class TestBeeps(Command):
+    """Plays the cues of capture-motion, shortened, without the sensor, and
+    prints each one as it plays: check that every beep is heard through the
+    earbuds or speakers that will be used for the capture.
+
+        python -m bodyscan test-beeps
+        python -m bodyscan test-beeps --backend winsound     (the old way, to compare)"""
+    name = "test-beeps"
+    help = "play the capture cues (no sensor) to check that every beep is heard"
+
+    def add_arguments(self, parser):
+        parser.add_argument("--backend", choices=("auto", "stream", "winsound"), default="auto")
+        parser.add_argument("--beep-min-ms", type=float, default=350.0)
+        parser.add_argument("--no-beep-wake", action="store_true")
+
+    def run(self, args):
+        from bodyscan.capture import cues
+        used = cues.configure(args.beep_min_ms, not args.no_beep_wake, args.backend)
+        info(f"backend: {used}")
+        time.sleep(1.0)
+        steps = [("leave: 1 long low", [(400, 800)], 1.2)]
+        steps += [(f"leave tick {k}", [(400, 80)], 1.0) for k in range(1, 4)]
+        steps += [("empty room: 2 low", [(440, 300), (440, 300)], 2.5)]
+        steps += [(f"countdown {k}", [(1000 if k <= 3 else 700, 120)], 1.0) for k in range(5, 0, -1)]
+        steps += [("start: 1 long (stand still)", [(1200, 700)], 1.5),
+                  ("2 short high (move)", [(1500, 150), (1500, 150)], 2.0),
+                  ("1 short (change)", [(1500, 150)], 2.0),
+                  ("3 medium (back to the mark)", [(1000, 250)] * 3, 2.5),
+                  ("1 long (A-pose, stand still)", [(1200, 700)], 2.0),
+                  ("end: 2", [(1200, 200), (1200, 200)], 0.0)]
+        for number, (label, tones, wait) in enumerate(steps, 1):
+            info(f"{number:2d}  {label}")
+            cues.beep_pattern(*tones) if len(tones) > 1 else cues.beep(*tones[0])
+            time.sleep(wait)
+        cues.flush(5.0)
+        cues.close()
+        info(f"{len(steps)} cues played: tell which numbers you did not hear")
+        return 0

@@ -538,6 +538,7 @@ Empty scene, countdown, still periods.
 | `--delay` | `15.0` s | countdown to take position and pose |  |
 | `--beep-min-ms` | `350.0` ms | shortest beep: earbuds and speakers cut the start of a short sound |  |
 | `--beep-wake` | `True` | a faint pulse near the limit of hearing before a beep that follows a pause of a second or more: wireless earbuds go to sleep between cues and cut the start of the next sound | off (--no-beep-wake): if the pulse is audible and annoying |
+| `--beep-backend` | `auto` | how beeps are played: 'stream' keeps one audio stream open for the whole capture (needs: pip install sounddevice), so Bluetooth earbuds never fall asleep between beeps; 'winsound' opens the audio device for each beep; 'auto' = stream when sounddevice is installed |  |
 | `--hold` | `3.0` s | standing still before and after the turn (motor mode) |  |
 
 ### [motor]
@@ -588,6 +589,7 @@ Time to leave the scene, empty scene and countdown.
 | `--delay` | `15.0` s | countdown to take position and pose |  |
 | `--beep-min-ms` | `350.0` ms | shortest beep: earbuds and speakers cut the start of a short sound |  |
 | `--beep-wake` | `True` | a faint pulse near the limit of hearing before a beep that follows a pause of a second or more: wireless earbuds go to sleep between cues and cut the start of the next sound | off (--no-beep-wake): if the pulse is audible and annoying |
+| `--beep-backend` | `auto` | how beeps are played: 'stream' keeps one audio stream open for the whole capture (needs: pip install sounddevice), so Bluetooth earbuds never fall asleep between beeps; 'winsound' opens the audio device for each beep; 'auto' = stream when sounddevice is installed |  |
 
 ### [stepping]
 
@@ -621,6 +623,7 @@ Time to leave the room, empty room, countdown, recording with sound cues.
 | `--delay` | `10.0` s | countdown to walk to the floor mark and take the A-pose (a beep every second) |  |
 | `--beep-min-ms` | `350.0` ms | shortest beep: earbuds and speakers cut the start of a short sound |  |
 | `--beep-wake` | `True` | a faint pulse near the limit of hearing before a beep that follows a pause of a second or more: wireless earbuds go to sleep between cues and cut the start of the next sound | off (--no-beep-wake): if the pulse is audible and annoying |
+| `--beep-backend` | `auto` | how beeps are played: 'stream' keeps one audio stream open for the whole capture (needs: pip install sounddevice), so Bluetooth earbuds never fall asleep between beeps; 'winsound' opens the audio device for each beep; 'auto' = stream when sounddevice is installed |  |
 | `--duration` | not set | record this long; not set: until ENTER (or the safety stop) |  |
 | `--hold` | `3.0` s | standing still in the A-pose at the start (one long beep, then two short high beeps: move) and at the end (one long beep) |  |
 | `--back-seconds` | `8.0` s | three medium beeps this long before the final hold: go back to the mark (0: no such cue) |  |

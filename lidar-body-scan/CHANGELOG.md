@@ -1,5 +1,14 @@
 # Changelog
 
+## Beeps through one open audio stream (2026-10-13)
+
+- The previous fix (longer beeps, wake pulse) did not make the earbuds play
+  every beep. Beeps are now mixed into one output stream (sounddevice) that
+  stays open for the whole capture, so Bluetooth earbuds never suspend the
+  link; `--beep-backend auto|stream|winsound`. sounddevice is added to the
+  capture extras; without it the old winsound path is used.
+- New command `test-beeps`: plays the capture cues without the sensor.
+
 ## Audible beeps through earbuds (2026-10-13)
 
 - Beeps are queued and played one after the other, each at least 350 ms
