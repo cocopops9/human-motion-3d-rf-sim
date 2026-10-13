@@ -210,7 +210,7 @@ class SessionTest(unittest.TestCase):
             np.savez(take / "frames" / f"frame_{k:05d}.npz", columns_ok=np.float64(mask.mean()),
                      time=np.float64(30.0 + 0.05 * k), column_ok=mask)
             if k not in (3, 4):
-                frames.append({"index": k, "time": 30.0 + 0.05 * k, "distance_m": 2.0 + 0.05 * k, "points": 900})
+                frames.append({"index": k, "time": 2900.0 + 0.05 * k, "distance_m": 2.0 + 0.05 * k, "points": 900})
         (seg / "segments.json").write_text(json.dumps({"frames": frames, "missing": [3, 4]}))
         (take / "capture.json").write_text(json.dumps({"record_start": 30.0,
                                                        "cues": [[0.5, "move"], [1.5, "back to the mark"]]}))
@@ -222,6 +222,7 @@ class SessionTest(unittest.TestCase):
         self.assertIn("frames below 0.99: 10 (25 %)", text)
         self.assertIn("person found in 38 of 40 frames", text)
         self.assertIn("move", text)
+        self.assertIn("back to the mark", text)                                 # windows on the PC clock
         self.assertIn("0 frames outside", text)
 
     def test_turns_in_both_directions(self):

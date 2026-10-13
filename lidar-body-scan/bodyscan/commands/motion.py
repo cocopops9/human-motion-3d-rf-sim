@@ -218,7 +218,10 @@ class CheckTake(Command):
               + (f"; frames without a person: {missing[:20]}{' ...' if len(missing) > 20 else ''}" if missing else ""))
         if not frames:
             return 1
-        t = np.array([f["time"] for f in frames])
+        # the segmented times are sensor times; the cues and record_start are on the recording PC clock,
+        # which every frame file also stores: the window of a frame comes from its own file
+        index = np.array([f["index"] for f in frames], dtype=np.int64)
+        t = times[np.clip(index, 0, len(times) - 1)]
         distance = np.array([f["distance_m"] for f in frames])
         points = np.array([f["points"] for f in frames])
 
@@ -232,7 +235,7 @@ class CheckTake(Command):
         for cue in cues:
             at, label = (cue[0], cue[1]) if isinstance(cue, (list, tuple)) else (cue, "beep")
             edges.append(float(at)), labels.append(label)
-        end = float(t.max() - origin) + 0.1
+        end = float(np.nanmax(t) - origin) + 0.1
         edges.append(end)
         if len(edges) == 2:
             edges = list(np.arange(0.0, end + 4.0, 4.0))
