@@ -6,6 +6,8 @@ frame, with its phase label) and when the phase ends. A capture protocol is
 just a list of phases, so a new protocol (another motor, another sequence of
 cues) is a new list, or a new Phase subclass:
 
+    Leave        time for the operator to leave the scene after starting the command;
+                 a low tick every second, nothing stored
     Background   empty scene, stored in background/
     Countdown    time to take position; a beep every second, nothing stored
     Hold         standing still, stored with a phase label (1 before, 3 after the turn)
@@ -33,6 +35,23 @@ from bodyscan.capture.cues import EnterListener, beep
 from bodyscan.log import info, warning
 
 
+def _later(seconds: float, frequency: float, duration_ms: float) -> None:
+    """A beep after a short delay, without blocking the scan loop (beep patterns)."""
+    import threading
+    threading.Timer(seconds, beep, args=(frequency, duration_ms)).start()
+
+
+def beep_pattern(*tones) -> None:
+    """Beeps (frequency, duration_ms) one after the other, 0.15 s apart."""
+    at = 0.0
+    for frequency, duration_ms in tones:
+        if at == 0.0:
+            beep(frequency, duration_ms)
+        else:
+            _later(at, frequency, duration_ms)
+        at += duration_ms / 1000.0 + 0.15
+
+
 class Phase:
     name = "phase"
     store: str | None = "frames"        # "background", "frames", or None (not stored)
@@ -58,12 +77,33 @@ class Phase:
         """Called once when the phase is over."""
 
 
+class Leave(Phase):
+    """Time to walk out of the sensor's view after starting the command: one long low
+    beep, then a low tick every second (higher in the last 3 s); nothing stored."""
+    name = "leave"
+    store = None
+
+    def begin(self, session, t):
+        beep(400, 800)
+        super().begin(session, t)
+        self.last = None
+
+    def update(self, session, t):
+        remaining = int(np.ceil(self.seconds - (t - self.started)))
+        if remaining != self.last and remaining > 0:
+            self.last = remaining
+            beep(600 if remaining <= 3 else 400, 80)
+            info(f"  leave the scene: {remaining}")
+
+
 class Background(Phase):
+    """Empty scene: two low beeps at the start, silence while it records (stay out of view)."""
     name = "background"
     store = "background"
 
     def begin(self, session, t):
         beep(440, 300)
+        _later(0.45, 440, 300)
         super().begin(session, t)
 
 
@@ -199,6 +239,62 @@ class Record(Phase):
 
     def end(self, session, t):
         session.log["record_seconds"] = round(t - self.started, 3)
+
+
+class Motion(Record):
+    """A take of a moving person, with sound cues (the person cannot watch the screen):
+
+        start          one long beep              stand still in the A-pose on the mark
+        after hold     two short high beeps       move
+        every cue_every one short beep            change what you are doing (optional)
+        end - hold - back_seconds
+                       three medium beeps         go back to the mark
+        end - hold     one long beep              stand still in the A-pose
+        end            two beeps (the session)    done
+
+    Without a duration (until ENTER) only the first two cues are given."""
+    name = "record"
+
+    def __init__(self, seconds, max_seconds, hold, back_seconds, cue_every, message=""):
+        super().__init__(seconds, max_seconds, message)
+        self.hold, self.back_seconds, self.cue_every = hold, back_seconds, cue_every
+
+    def begin(self, session, t):
+        super().begin(session, t)                         # long beep: stand still
+        self.cues = [(self.hold, "move", ((1500, 150), (1500, 150)))]
+        if self.seconds is not None:
+            final = self.seconds - self.hold
+            back = final - self.back_seconds
+            if self.cue_every > 0:
+                k = self.hold + self.cue_every
+                while k < (back if self.back_seconds > 0 else final) - 1.0:
+                    self.cues.append((k, "change", ((1500, 150),)))
+                    k += self.cue_every
+            if self.back_seconds > 0 and back > self.hold + 1.0:
+                self.cues.append((back, "back to the mark", ((900, 200), (900, 200), (900, 200))))
+            if final > self.hold:
+                self.cues.append((final, "A-pose, stand still", ((1200, 700),)))
+        elif self.cue_every > 0:
+            self.next_change = self.hold + self.cue_every
+        self.cues.sort(key=lambda cue: cue[0])
+        session.log["cues"] = []
+        info("  beeps: 1 long = stand still (A-pose); 2 short high = move"
+             + ("; 1 short = change movement" if self.cue_every > 0 else "")
+             + ("; 3 medium = go back to the mark; 1 long = A-pose, stand still" if self.seconds is not None else
+                "; press ENTER after 3 s still in the A-pose")
+             + "; 2 at the end = done")
+
+    def update(self, session, t):
+        elapsed = t - self.started
+        while self.cues and elapsed >= self.cues[0][0]:
+            at, label, tones = self.cues.pop(0)
+            beep_pattern(*tones)
+            session.log["cues"].append([round(elapsed, 3), label])
+            info(f"  {elapsed:5.1f} s  {label}")
+        if self.seconds is None and self.cue_every > 0 and elapsed >= self.next_change:
+            beep(1500, 150)
+            session.log["cues"].append([round(elapsed, 3), "change"])
+            self.next_change += self.cue_every
 
 
 class Session:

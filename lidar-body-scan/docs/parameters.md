@@ -533,6 +533,7 @@ Empty scene, countdown, still periods.
 
 | Option | Default | Meaning | Effect of changing it |
 |---|---|---|---|
+| `--leave-seconds` | `0.0` s | time to walk out of the sensor's view after starting the command, before the empty scene is recorded (low ticks every second; nothing stored) |  |
 | `--background-seconds` | `3.0` s | empty-scene recording at the start (nobody near the platform or the mark) |  |
 | `--delay` | `15.0` s | countdown to take position and pose |  |
 | `--hold` | `3.0` s | standing still before and after the turn (motor mode) |  |
@@ -576,10 +577,11 @@ The sensor (or a recording, to test a protocol without the sensor).
 
 ### [timing]
 
-Empty scene and countdown.
+Time to leave the scene, empty scene and countdown.
 
 | Option | Default | Meaning | Effect of changing it |
 |---|---|---|---|
+| `--leave-seconds` | `10.0` s | time to walk out of the sensor's view after starting the command, before the empty scene is recorded (low ticks every second; nothing stored) |  |
 | `--background-seconds` | `3.0` s | empty-scene recording at the start (nobody near the platform or the mark) |  |
 | `--delay` | `15.0` s | countdown to take position and pose |  |
 
@@ -606,13 +608,17 @@ The sensor (or a recording, to test a protocol without the sensor).
 
 ### [timing]
 
-Empty room, countdown, recording.
+Time to leave the room, empty room, countdown, recording with sound cues.
 
 | Option | Default | Meaning | Effect of changing it |
 |---|---|---|---|
-| `--background-seconds` | `10.0` s | empty-room recording at the start (nobody in the room) |  |
-| `--delay` | `10.0` s | countdown to walk to the floor mark and take the A-pose |  |
+| `--leave-seconds` | `10.0` s | time to walk out of the sensor's view after starting the command, before the empty room is recorded (low ticks every second; nothing stored) |  |
+| `--background-seconds` | `10.0` s | empty-room recording (nobody in the sensor's view): starts with two low beeps |  |
+| `--delay` | `10.0` s | countdown to walk to the floor mark and take the A-pose (a beep every second) |  |
 | `--duration` | not set | record this long; not set: until ENTER (or the safety stop) |  |
+| `--hold` | `3.0` s | standing still in the A-pose at the start (one long beep, then two short high beeps: move) and at the end (one long beep) |  |
+| `--back-seconds` | `8.0` s | three medium beeps this long before the final hold: go back to the mark (0: no such cue) |  |
+| `--cue-every` | `0.0` s | one short beep every this many seconds while moving: change movement (0: none) |  |
 | `--max-seconds` | `1800.0` s | safety stop of a recording that waits for ENTER |  |
 | `--expected-mode` | `1024x20` | warn if the sensor runs another lidar mode ('' = no check) |  |
 

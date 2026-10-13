@@ -20,10 +20,21 @@ from bodyscan.scene import FloorConfig
 
 @dataclass
 class MotionTimingConfig(CountdownConfig):
-    """Empty room, countdown, recording."""
-    background_seconds: float = param(10.0, "empty-room recording at the start (nobody in the room)", unit="s")
-    delay: float = param(10.0, "countdown to walk to the floor mark and take the A-pose", unit="s")
+    """Time to leave the room, empty room, countdown, recording with sound cues."""
+    leave_seconds: float = param(10.0, "time to walk out of the sensor's view after starting the command, before "
+                                       "the empty room is recorded (low ticks every second; nothing stored)",
+                                 unit="s")
+    background_seconds: float = param(10.0, "empty-room recording (nobody in the sensor's view): starts with two "
+                                            "low beeps", unit="s")
+    delay: float = param(10.0, "countdown to walk to the floor mark and take the A-pose (a beep every second)",
+                         unit="s")
     duration: float | None = param(None, "record this long; not set: until ENTER (or the safety stop)", unit="s")
+    hold: float = param(3.0, "standing still in the A-pose at the start (one long beep, then two short high "
+                             "beeps: move) and at the end (one long beep)", unit="s")
+    back_seconds: float = param(8.0, "three medium beeps this long before the final hold: go back to the mark "
+                                     "(0: no such cue)", unit="s")
+    cue_every: float = param(0.0, "one short beep every this many seconds while moving: change movement "
+                                  "(0: none)", unit="s")
     max_seconds: float = param(1800.0, "safety stop of a recording that waits for ENTER", unit="s")
     expected_mode: str = param("1024x20", "warn if the sensor runs another lidar mode ('' = no check)")
 
@@ -82,9 +93,19 @@ class CaptureMotion(CaptureCommand):
 
         python -m bodyscan capture-motion C:\\lidar\\walk01 --duration 60
 
-        empty room (--background-seconds, default 10 s: nobody in the room) ->
-        countdown (--delay: walk to the floor mark, take the A-pose) ->
-        recording (--duration seconds, or until ENTER).
+        leave (--leave-seconds, default 10 s: walk out of the sensor's view;
+               one long low beep, then low ticks) ->
+        empty room (--background-seconds, default 10 s: two low beeps, then
+               silence; nobody in view) ->
+        countdown (--delay: a beep every second; walk to the floor mark,
+               take the A-pose) ->
+        recording (--duration seconds, or until ENTER), with beeps:
+            1 long            stand still in the A-pose (--hold, 3 s)
+            2 short high      move
+            1 short           change movement (every --cue-every s, if set)
+            3 medium          go back to the mark (--back-seconds before the end)
+            1 long            A-pose, stand still (the last --hold s)
+            2 (end)           done
 
     Every take should start and end with 3 s standing still in the A-pose on
     the floor mark (the tracker starts from it). Use the sensor in 1024x20
@@ -95,14 +116,16 @@ class CaptureMotion(CaptureCommand):
     config_class = MotionCaptureConfig
 
     def phases(self, config, devices):
-        from bodyscan.capture.session import Background, Countdown, Record
+        from bodyscan.capture.protocols import leave_phases
+        from bodyscan.capture.session import Background, Countdown, Motion
         t = config.timing
-        return [Background(t.background_seconds, f"{t.background_seconds:g} s: empty room, stay out of the "
-                                                 "sensor's view"),
-                Countdown(t.delay, f"{t.delay:g} s: walk to the floor mark and take the A-pose"),
-                Record(t.duration, t.max_seconds,
-                       (f"{t.duration:g} s: " if t.duration else "until ENTER: ") +
-                       "3 s A-pose, the motion, 3 s A-pose")]
+        return leave_phases(t) + [
+            Background(t.background_seconds, f"{t.background_seconds:g} s: empty room, stay out of the sensor's "
+                                             "view"),
+            Countdown(t.delay, f"{t.delay:g} s: walk to the floor mark and take the A-pose"),
+            Motion(t.duration, t.max_seconds, t.hold, t.back_seconds, t.cue_every,
+                   (f"{t.duration:g} s: " if t.duration else "until ENTER: ") +
+                   f"{t.hold:g} s A-pose, the motion, {t.hold:g} s A-pose")]
 
     def extra_log(self, config, devices):
         return {"protocol": "motion", "duration": config.timing.duration}

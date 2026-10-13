@@ -105,6 +105,7 @@ class SessionTest(unittest.TestCase):
 
     def test_inplace_protocol(self):
         config = InPlaceCaptureConfig()
+        config.timing.leave_seconds = 0.0
         config.timing.background_seconds, config.timing.delay = 0.5, 0.3
         config.stepping.duration, config.stepping.cue_every = 2.0, 0.5
         source = FakeSource(frames=40, skip=[15])          # one frame lost during the capture
@@ -137,6 +138,7 @@ class SessionTest(unittest.TestCase):
         """Connecting to the sensor and booting the motor take seconds before the
         first scan: the empty-scene phase must still last its full time."""
         config = InPlaceCaptureConfig()
+        config.timing.leave_seconds = 0.0
         config.timing.background_seconds, config.timing.delay = 0.5, 0.3
         config.stepping.duration = 1.0
         source = FakeSource(frames=40)
@@ -159,6 +161,37 @@ class SessionTest(unittest.TestCase):
         self.assertEqual([p[0] for p in log["phases"]], ["background", "countdown", "hold", "rotation"])
         phases = [NpzRecording(path).load(k).phase for k in range(log["frames"])]
         self.assertNotIn(3, phases)                                          # nothing labelled 'still after'
+
+    def test_leave_phase_stores_nothing(self):
+        config = InPlaceCaptureConfig()
+        config.timing.leave_seconds, config.timing.background_seconds, config.timing.delay = 1.0, 0.5, 0.3
+        config.stepping.duration, config.stepping.cue_every = 1.0, 0.0
+        log, _ = self.run_session(FakeSource(frames=40), inplace_phases(config), name="leave")
+        self.assertEqual([p[0] for p in log["phases"]], ["leave", "background", "countdown", "capture"])
+        self.assertEqual(log["background"], 5)                             # the leave second is not stored
+        self.assertEqual(log["frames"], 10)
+
+    def test_motion_protocol_cues(self):
+        from bodyscan.commands.motion import CaptureMotion, MotionCaptureConfig
+        config = MotionCaptureConfig()
+        t = config.timing
+        t.leave_seconds, t.background_seconds, t.delay = 0.5, 0.5, 0.3
+        t.duration, t.hold, t.back_seconds, t.cue_every = 8.0, 1.0, 2.0, 1.0
+        log, _ = self.run_session(FakeSource(frames=100), CaptureMotion().phases(config, None), name="motion")
+        self.assertEqual([p[0] for p in log["phases"]], ["leave", "background", "countdown", "record"])
+        labels = [label for _, label in log["cues"]]
+        self.assertEqual(labels, ["move", "change", "change", "back to the mark", "A-pose, stand still"])
+        times = [at for at, _ in log["cues"]]
+        for at, expected in zip(times, (1.0, 2.0, 3.0, 5.0, 7.0)):
+            self.assertAlmostEqual(at, expected, delta=0.11)
+        self.assertAlmostEqual(log["record_seconds"], 8.0, delta=0.11)
+
+    def test_turntable_leave_shortens_the_two_pc_wait(self):
+        config = TurntableCaptureConfig()
+        config.motor.turn_deg = 360.0
+        before = record_seconds(config)
+        config.timing.leave_seconds = 10.0
+        self.assertAlmostEqual(before - record_seconds(config), 10.0, places=6)
 
     def test_turns_in_both_directions(self):
         self.assertEqual(split_turn(-400), [-STEPS_PER_TURN, -3200])

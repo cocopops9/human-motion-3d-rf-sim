@@ -1,5 +1,19 @@
 # Changelog
 
+## Capture: time to leave the scene, sound cues for motion takes (2026-10-13)
+
+- `capture-motion`, `capture-inplace`: `--leave-seconds` (default 10 s) before
+  the empty-scene recording, so the operator can walk out of the sensor's view
+  after starting the command (one long low beep, then low ticks every second;
+  nothing stored). `capture-turntable` has the option too (default 0); in
+  two-PC mode it is subtracted from the wait for the platform timer.
+- The empty scene starts with two low beeps.
+- `capture-motion`: beeps during the take: one long (stand still in the
+  A-pose, `--hold` 3 s), two short high (move), one short every `--cue-every`
+  s (change movement, off by default), three medium `--back-seconds` (8 s)
+  before the end (go back to the mark), one long (A-pose for the last
+  `--hold` s), two at the end. The cues are logged in capture.json.
+
 ## Tracking: clutter and hidden arms (2026-10-10)
 
 - `track`: points farther than `max_correspondence` (25 cm) from the body are

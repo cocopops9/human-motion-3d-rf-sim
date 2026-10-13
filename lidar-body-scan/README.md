@@ -341,7 +341,7 @@ python -m bodyscan review-motion C:\lidar\s01_walk01_motion.npz --segments C:\li
 python -m bodyscan export-motion C:\lidar\s01_walk01_motion.npz --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_meshes --rate 200
 ```
 
-The take starts with 10 s of empty room, then the person stands 3 s in the A-pose on a floor mark, moves, and ends with 3 s in the A-pose. Use the sensor in 1024 x 20 mode. Without the sensor or the SMPL-X files, the whole chain runs on synthetic data:
+After the command starts there are 10 s to walk out of the sensor's view (low ticks), then 10 s of empty room (two low beeps, then silence), a 10 s countdown (a beep every second) to walk to the floor mark, and the take: one long beep, stand 3 s in the A-pose; two short high beeps, move; three medium beeps, go back to the mark; one long beep, 3 s in the A-pose; two beeps, done (docs/motion.md, section 3, has the table; `--cue-every N` adds a short beep every N s to change movement). Use the sensor in 1024 x 20 mode. Without the sensor or the SMPL-X files, the whole chain runs on synthetic data:
 
 ```
 python -m bodyscan make-test-body C:\lidar\testbody.npz

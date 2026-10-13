@@ -91,9 +91,28 @@ not measured).
 
 ### A take
 
-`capture-motion` records 10 s of empty room (`--background-seconds`; nobody in
-the sensor's view), counts down 10 s (`--delay`), then records until ENTER or
-for `--duration` seconds.
+`capture-motion` gives 10 s to walk out of the sensor's view after the
+command is started (`--leave-seconds`), records 10 s of empty room
+(`--background-seconds`; nobody in view), counts down 10 s (`--delay`), then
+records until ENTER or for `--duration` seconds. The person cannot watch the
+screen, so every step has its beeps:
+
+| Beeps | When | What to do |
+|---|---|---|
+| 1 long low, then a low tick every second (higher in the last 3) | leave (`--leave-seconds`) | walk out of the sensor's view |
+| 2 low | empty room starts (`--background-seconds`) | stay out of view, silence until the countdown |
+| 1 every second (higher in the last 3) | countdown (`--delay`) | walk to the floor mark, take the A-pose |
+| 1 long | recording starts | stand still in the A-pose for `--hold` s (3 s) |
+| 2 short high | after the hold | move |
+| 1 short | every `--cue-every` s (off by default) | change movement |
+| 3 medium | `--back-seconds` (8 s) before the final hold | go back to the floor mark |
+| 1 long | the last `--hold` s | A-pose, stand still |
+| 2 | end | done |
+
+Without `--duration` (recording until ENTER) only the cues up to "move" are
+given: stand 3 s in the A-pose before pressing ENTER. The empty room must
+really be empty: a person in it becomes part of the background and is erased
+from the take (the person2 take of 2026-09-30 lost the torso this way).
 
 1. Start on a floor mark in the A-pose (arms about 40 deg from the body,
    palms forward), still for 3 s: the tracker starts from this pose.

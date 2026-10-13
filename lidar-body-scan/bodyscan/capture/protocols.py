@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from bodyscan.capture.motor import STEPS_PER_TURN, split_turn
-from bodyscan.capture.session import Background, Countdown, Hold, MotorTurn, Record, Stepping
+from bodyscan.capture.session import Background, Countdown, Hold, Leave, MotorTurn, Record, Stepping
 from bodyscan.config import param, section
 from bodyscan.log import info
 
@@ -24,10 +24,21 @@ class SensorConfig:
 
 @dataclass
 class CountdownConfig:
-    """Empty scene and countdown."""
+    """Time to leave the scene, empty scene and countdown."""
+    leave_seconds: float = param(0.0, "time to walk out of the sensor's view after starting the command, before "
+                                      "the empty scene is recorded (low ticks every second; nothing stored)",
+                                 unit="s")
     background_seconds: float = param(3.0, "empty-scene recording at the start (nobody near the platform or "
                                            "the mark)", unit="s")
     delay: float = param(15.0, "countdown to take position and pose", unit="s")
+
+
+@dataclass
+class InPlaceTimingConfig(CountdownConfig):
+    """Time to leave the scene, empty scene and countdown."""
+    leave_seconds: float = param(10.0, "time to walk out of the sensor's view after starting the command, before "
+                                       "the empty scene is recorded (low ticks every second; nothing stored)",
+                                 unit="s")
 
 
 @dataclass
@@ -83,8 +94,16 @@ class SteppingConfig:
 @dataclass
 class InPlaceCaptureConfig:
     sensor: SensorConfig = section(SensorConfig)
-    timing: CountdownConfig = section(CountdownConfig)
+    timing: InPlaceTimingConfig = section(InPlaceTimingConfig)
     stepping: SteppingConfig = section(SteppingConfig)
+
+
+def leave_phases(timing: CountdownConfig) -> list:
+    """The leave phase, when there is one (leave_seconds > 0)."""
+    if timing.leave_seconds <= 0:
+        return []
+    return [Leave(timing.leave_seconds, f"{timing.leave_seconds:g} s: walk out of the sensor's view (low ticks); "
+                                        "two low beeps then start the empty-scene recording")]
 
 
 def record_seconds(config: TurntableCaptureConfig) -> float | None:
@@ -97,7 +116,7 @@ def record_seconds(config: TurntableCaptureConfig) -> float | None:
         return None
     commands = len(split_turn(motor.turn_deg, motor.max_steps_per_command))
     rotation = abs(motor.turn_deg) / 360.0 * two_pc.lap_seconds + 0.25 * max(commands - 1, 0)
-    wait = two_pc.platform_delay - timing.background_seconds - timing.delay
+    wait = two_pc.platform_delay - timing.leave_seconds - timing.background_seconds - timing.delay
     info(f"recording length {wait + rotation + two_pc.margin:.0f} s: the platform starts within {wait:.0f} s, "
          f"turns {motor.turn_deg:g} deg in about {rotation:.0f} s, then {two_pc.margin:g} s still")
     return wait + rotation + two_pc.margin
@@ -107,7 +126,8 @@ def turntable_phases(config: TurntableCaptureConfig, motor=None) -> list:
     """Motor mode: background, countdown, hold, turn, hold. Two-PC mode:
     background, countdown, one recording (the fusion finds the turn in the data)."""
     t = config.timing
-    phases = [Background(t.background_seconds, f"{t.background_seconds:g} s: platform empty, stay away from it"),
+    phases = leave_phases(t) + [
+              Background(t.background_seconds, f"{t.background_seconds:g} s: platform empty, stay away from it"),
               Countdown(t.delay, f"{t.delay:g} s: step onto the centre of the platform, pose, stand still")]
     if motor is None:
         seconds = record_seconds(config)
@@ -128,7 +148,8 @@ def turntable_phases(config: TurntableCaptureConfig, motor=None) -> list:
 
 def inplace_phases(config: InPlaceCaptureConfig) -> list:
     t, s = config.timing, config.stepping
-    return [Background(t.background_seconds, f"{t.background_seconds:g} s: stay out of the capture region"),
+    return leave_phases(t) + [
+            Background(t.background_seconds, f"{t.background_seconds:g} s: stay out of the capture region"),
             Countdown(t.delay, f"{t.delay:g} s: go to the mark and take the pose"),
             Stepping(s.duration, s.cue_every, f"{s.duration:g} s: at every beep turn by one small step (20 to "
                                               f"30 deg), then hold still")]
