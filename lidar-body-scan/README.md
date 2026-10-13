@@ -336,6 +336,7 @@ At every beep the person turns by a small step (20 to 30 degrees) and holds stil
 python -m bodyscan avatar C:\lidar\person_tt17.ply --model C:\smplx\SMPLX_NEUTRAL.npz --out C:\lidar\s01_avatar
 python -m bodyscan capture-motion C:\lidar\s01_walk01 --duration 60
 python -m bodyscan segment-motion C:\lidar\s01_walk01 --out C:\lidar\s01_walk01_seg
+python -m bodyscan check-take C:\lidar\s01_walk01 C:\lidar\s01_walk01_seg
 python -m bodyscan track C:\lidar\s01_walk01_seg --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_motion
 python -m bodyscan review-motion C:\lidar\s01_walk01_motion.npz --segments C:\lidar\s01_walk01_seg --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_review
 python -m bodyscan export-motion C:\lidar\s01_walk01_motion.npz --avatar C:\lidar\s01_avatar.npz --out C:\lidar\s01_walk01_meshes --rate 200

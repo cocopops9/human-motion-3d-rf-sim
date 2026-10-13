@@ -111,6 +111,9 @@ class OusterSource:
             "timestamps": np.asarray(scan.timestamp, dtype=np.uint64),
             "phase": np.int64(phase),
             "columns_ok": np.float64(self.columns_ok(scan)),
+            # which columns arrived (1) or were lost (0): shows whether the losses are always the same
+            # packets, and whether they fall on the person (check-take)
+            "column_ok": (np.asarray(scan.status) & 0x1).astype(np.uint8),
         }
         reflectivity = self.field(scan, "REFLECTIVITY")
         if reflectivity is not None:

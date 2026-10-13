@@ -193,6 +193,37 @@ class SessionTest(unittest.TestCase):
         config.timing.leave_seconds = 10.0
         self.assertAlmostEqual(before - record_seconds(config), 10.0, places=6)
 
+    def test_check_take_report(self):
+        import contextlib
+        import io
+        import types
+        from bodyscan.commands.motion import CheckTake
+        take, seg = self.folder.path / "take", self.folder.path / "seg"
+        (take / "frames").mkdir(parents=True)
+        seg.mkdir()
+        rng = np.random.default_rng(0)
+        frames = []
+        for k in range(40):
+            mask = np.ones(64, dtype=np.uint8)
+            if k % 4 == 0:
+                mask[8:24] = 0                                                  # one lost packet
+            np.savez(take / "frames" / f"frame_{k:05d}.npz", columns_ok=np.float64(mask.mean()),
+                     time=np.float64(30.0 + 0.05 * k), column_ok=mask)
+            if k not in (3, 4):
+                frames.append({"index": k, "time": 30.0 + 0.05 * k, "distance_m": 2.0 + 0.05 * k, "points": 900})
+        (seg / "segments.json").write_text(json.dumps({"frames": frames, "missing": [3, 4]}))
+        (take / "capture.json").write_text(json.dumps({"record_start": 30.0,
+                                                       "cues": [[0.5, "move"], [1.5, "back to the mark"]]}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = CheckTake().run(types.SimpleNamespace(take=str(take), segments=str(seg), near=1.5, far=4.0))
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("frames below 0.99: 10 (25 %)", text)
+        self.assertIn("person found in 38 of 40 frames", text)
+        self.assertIn("move", text)
+        self.assertIn("0 frames outside", text)
+
     def test_turns_in_both_directions(self):
         self.assertEqual(split_turn(-400), [-STEPS_PER_TURN, -3200])
         self.assertEqual(split_turn(0), [])

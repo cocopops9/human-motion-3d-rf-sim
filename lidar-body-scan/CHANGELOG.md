@@ -1,5 +1,15 @@
 # Changelog
 
+## check-take, lost columns per packet (2026-10-13)
+
+- New command `check-take TAKE SEGMENTS`: columns received per frame, which
+  UDP packets are lost and whether the same ones are lost in consecutive
+  frames, frames without a person, distance of the person between the beeps.
+- Frames now store `column_ok` (which of the columns arrived), so that the
+  cause of lost columns (random: receiving PC or network; fixed packets:
+  sensor or cable) can be told from the data. Older takes only have the
+  fraction.
+
 ## Capture: time to leave the scene, sound cues for motion takes (2026-10-13)
 
 - `capture-motion`, `capture-inplace`: `--leave-seconds` (default 10 s) before

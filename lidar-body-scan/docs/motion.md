@@ -114,6 +114,22 @@ given: stand 3 s in the A-pose before pressing ENTER. The empty room must
 really be empty: a person in it becomes part of the background and is erased
 from the take (the person2 take of 2026-09-30 lost the torso this way).
 
+After every take, check it before leaving the site:
+
+```
+python -m bodyscan segment-motion C:\lidar\open\s01_walk01 --out C:\lidar\open\s01_walk01_seg
+python -m bodyscan check-take C:\lidar\open\s01_walk01 C:\lidar\open\s01_walk01_seg
+```
+
+`check-take` reports the columns received (a lost UDP packet is 16 columns,
+a hole 5.6 deg wide: 0.25 m at 2.5 m; `segment-motion` drops frames below 90 %
+of the columns), which packets are lost and whether the same ones are lost
+again in the next frame (random: the receiving PC or network; fixed: a
+sensor or cable cause), the frames without a person, and the distance of the
+person in every window between the beeps (1.5 to 4 m is the working range).
+Takes recorded before 2026-10-13 have no per-column record: the report then
+gives only the fraction of columns.
+
 1. Start on a floor mark in the A-pose (arms about 40 deg from the body,
    palms forward), still for 3 s: the tracker starts from this pose.
 2. The motion.

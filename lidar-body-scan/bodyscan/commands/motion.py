@@ -145,6 +145,111 @@ class CaptureMotion(CaptureCommand):
                     "--expected-mode '' to silence this check")
 
 
+class CheckTake(Command):
+    """Quality report of a take, right after capture-motion and segment-motion.
+
+        python -m bodyscan capture-motion C:\\lidar\\open\\s01_check --duration 20
+        python -m bodyscan segment-motion C:\\lidar\\open\\s01_check --out C:\\lidar\\open\\s01_check_seg
+        python -m bodyscan check-take C:\\lidar\\open\\s01_check C:\\lidar\\open\\s01_check_seg
+
+    Reports: the columns received per frame (a lost UDP packet is 16 columns:
+    how many frames lose one, which packets are lost, how wide the hole is at
+    the person's distance), the frames without a person, and the distance of
+    the person between the beeps of the take (1.5 to 4 m is the working range)."""
+    name = "check-take"
+    help = "quality report of a take: lost columns, person found, distance over time"
+
+    def add_arguments(self, parser):
+        parser.add_argument("take", help="capture directory (capture-motion)")
+        parser.add_argument("segments", help="segment-motion output folder")
+        parser.add_argument("--near", type=float, default=1.5, help="nearest good distance [m]")
+        parser.add_argument("--far", type=float, default=4.0, help="farthest good distance [m]")
+
+    def run(self, args):
+        import glob
+        import json
+        import numpy as np
+        take, seg = Path(args.take), Path(args.segments)
+        paths = sorted(glob.glob(str(take / "frames" / "frame_*.npz")))
+        if not paths:
+            raise SystemExit(f"{take}: no frames (a capture directory of capture-motion is expected)")
+        ok, times, masks = [], [], []
+        for path in paths:
+            data = np.load(path)
+            ok.append(float(data["columns_ok"]) if "columns_ok" in data.files else 1.0)
+            times.append(float(data["time"]) if "time" in data.files else np.nan)
+            if "column_ok" in data.files:
+                masks.append(data["column_ok"])
+        ok, times = np.array(ok), np.array(times)
+        print(f"{take}: {len(ok)} frames")
+
+        print("columns received (a lost UDP packet is 16 columns)")
+        print(f"  min {ok.min():.3f}   5th percentile {np.percentile(ok, 5):.3f}   median {np.median(ok):.3f}")
+        for limit in (0.99, 0.95, 0.90):
+            print(f"  frames below {limit:.2f}: {int((ok < limit).sum())} ({100 * (ok < limit).mean():.0f} %)")
+        print("  segment-motion drops frames below 0.90")
+
+        if len(masks) == len(ok):
+            masks = np.array(masks)
+            columns = masks.shape[1]
+            lost = (masks == 0)
+            per_frame = lost.sum(axis=1)
+            packets = lost.reshape(len(ok), columns // 16, 16).any(axis=2)
+            print(f"  lost packets per frame: mean {packets.sum(axis=1).mean():.2f}, "
+                  f"max {int(packets.sum(axis=1).max())}")
+            share = packets.mean(axis=0)
+            top = np.argsort(share)[::-1][:5]
+            print("  packets lost most often (packet number 0 to "
+                  f"{packets.shape[1] - 1}, share of frames): "
+                  + ", ".join(f"{int(k)}: {100 * share[k]:.0f} %" for k in top if share[k] > 0))
+            if len(ok) > 1:
+                again = (packets[1:] & packets[:-1]).sum() / max(packets[:-1].sum(), 1)
+                print(f"  a packet lost in one frame is also lost in the next one in {100 * again:.0f} % of the cases "
+                      "(near 0: random; high: a fixed cause)")
+            span = 360.0 / columns * 16
+            print(f"  one lost packet is a hole {span:.1f} deg wide: {0.0175 * span * 2.5:.2f} m at 2.5 m")
+        else:
+            print("  (this take has no per-column record: it was made with an older version)")
+
+        summary = json.load(open(seg / "segments.json"))
+        frames = summary["frames"]
+        missing = summary.get("missing", [])
+        print(f"person found in {len(frames)} of {len(frames) + len(missing)} frames"
+              + (f"; frames without a person: {missing[:20]}{' ...' if len(missing) > 20 else ''}" if missing else ""))
+        if not frames:
+            return 1
+        t = np.array([f["time"] for f in frames])
+        distance = np.array([f["distance_m"] for f in frames])
+        points = np.array([f["points"] for f in frames])
+
+        try:
+            log = json.load(open(take / "capture.json"))
+        except OSError:
+            log = {}
+        origin = float(log.get("record_start", np.nanmin(times)))
+        cues = log.get("cues") or []
+        edges, labels = [0.0], ["start"]
+        for cue in cues:
+            at, label = (cue[0], cue[1]) if isinstance(cue, (list, tuple)) else (cue, "beep")
+            edges.append(float(at)), labels.append(label)
+        end = float(t.max() - origin) + 0.1
+        edges.append(end)
+        if len(edges) == 2:
+            edges = list(np.arange(0.0, end + 4.0, 4.0))
+            labels = [""] * len(edges)
+        print("window (s after the start of the take)   frames   distance [m]      points (median)")
+        rel = t - origin
+        for k, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
+            m = (rel >= a) & (rel < b)
+            if m.any():
+                print(f"  {a:6.1f} to {b:6.1f}  {labels[k]:<20} {int(m.sum()):5d}   "
+                      f"{distance[m].min():5.2f} to {distance[m].max():5.2f}     {int(np.median(points[m])):6d}")
+        outside = int(((distance < args.near) | (distance > args.far)).sum())
+        print(f"distance of the person: {distance.min():.2f} to {distance.max():.2f} m; "
+              f"{outside} frames outside {args.near:g} to {args.far:g} m")
+        return 0
+
+
 # ----------------------------------------------------------------------------
 # Processing
 # ----------------------------------------------------------------------------
