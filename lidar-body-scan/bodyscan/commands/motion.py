@@ -289,7 +289,7 @@ class SegmentMotion(ConfiguredCommand):
 class FitAvatar(ConfiguredCommand):
     """Fit the body model (SMPL-X) to a person's turntable scan: the avatar used for tracking.
 
-        python -m bodyscan avatar person_tt11_mesh.ply --model C:\\models\\smplx\\SMPLX_NEUTRAL.npz
+        python -m bodyscan avatar person_tt11_mesh.ply --model SMPLX_NEUTRAL.npz
             --out person_tt11_avatar
 
     The scan is the output of 'fuse' or 'mesh' (z up, feet on z = 0, A-pose,

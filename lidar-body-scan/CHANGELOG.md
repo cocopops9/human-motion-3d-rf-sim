@@ -1,5 +1,12 @@
 # Changelog
 
+## Body models live with the code (2026-10-14)
+
+- `C:\lidar` is data only. The SMPL-X files go in the project's `models`
+  folder (ignored by git, never committed); `--model SMPLX_MALE.npz` finds
+  them by file name, also when the avatar remembers another path.
+- Documentation examples use `--model SMPLX_NEUTRAL.npz`.
+
 ## Beeps through one open audio stream (2026-10-13)
 
 - The previous fix (longer beeps, wake pulse) did not make the earbuds play

@@ -118,6 +118,28 @@ def _as_array(value):
     return np.asarray(value)
 
 
+PROJECT_DIR = Path(__file__).resolve().parents[2]       # the code folder (lidar-body-scan)
+MODEL_FOLDERS = (PROJECT_DIR / "models", PROJECT_DIR)
+
+
+def find_model(path) -> Path:
+    """The model file: the path as given, otherwise a file of that name in the
+    project's models folder (or the project folder). The data folder (C:\\lidar)
+    holds data only; the model files stay with the code, outside git
+    (.gitignore excludes them)."""
+    path = Path(path)
+    if path.exists():
+        return path
+    for folder in MODEL_FOLDERS:
+        candidate = folder / path.name
+        if candidate.exists():
+            return candidate
+    searched = ", ".join(str(f / path.name) for f in (path.parent, *MODEL_FOLDERS))
+    raise SystemExit(f"body model {path.name} not found (looked in: {searched}). Download SMPL-X (npz) from "
+                     "https://smpl-x.is.tue.mpg.de after registering and put it in "
+                     f"{MODEL_FOLDERS[0]}, or make the test body with 'python -m bodyscan make-test-body'")
+
+
 @dataclass
 class Posed:
     """A posed body (world frame): vertices (N, V, 3), joints (N, 55, 3), and the
@@ -131,11 +153,7 @@ class BodyModel:
     """An SMPL-X model file (see the module docstring) on a device."""
 
     def __init__(self, path, num_betas: int = 10, device: str | None = None, dtype=torch.float32):
-        self.path = Path(path)
-        if not self.path.exists():
-            raise SystemExit(f"body model {self.path} not found. Download SMPL-X (npz) from "
-                             "https://smpl-x.is.tue.mpg.de after registering, or make the test body with "
-                             "'python -m bodyscan make-test-body'")
+        self.path = find_model(path)
         data = np.load(self.path, allow_pickle=True)
         missing = [k for k in ("v_template", "f", "shapedirs", "J_regressor", "weights", "kintree_table")
                    if k not in data.files]

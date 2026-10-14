@@ -19,7 +19,7 @@ leaves uncertain.
 ```
 python -m bodyscan capture-turntable C:\lidar\s01_tt --turn-deg 1800          scan of the person (as before)
 python -m bodyscan fuse C:\lidar\s01_tt --out C:\lidar\s01_scan
-python -m bodyscan avatar C:\lidar\s01_scan.ply --model C:\smplx\SMPLX_NEUTRAL.npz --out C:\lidar\s01_avatar
+python -m bodyscan avatar C:\lidar\s01_scan.ply --model SMPLX_NEUTRAL.npz --out C:\lidar\s01_avatar
 
 python -m bodyscan capture-motion C:\lidar\s01_walk01 --duration 60            a take of the person moving
 python -m bodyscan segment-motion C:\lidar\s01_walk01 --out C:\lidar\s01_walk01_seg
@@ -49,7 +49,7 @@ every parameter.
 |---|---|---|
 | PyTorch | `python -m pip install torch` (on the processing PC with an NVIDIA GPU, the CUDA build from pytorch.org) | the body model and the fits; the capture PC does not need it |
 | Pillow | `python -m pip install pillow` | the review GIF (without it only PNG pictures) |
-| SMPL-X model | register at https://smpl-x.is.tue.mpg.de, download the npz models (`SMPLX_NEUTRAL.npz`, or male/female) | the body model. The licence allows non-commercial research and forbids redistribution: keep the files outside the repository (`.gitignore` excludes `SMPLX_*`, folders named `smplx` and every `.npz`) |
+| SMPL-X model | register at https://smpl-x.is.tue.mpg.de, download the npz models (`SMPLX_NEUTRAL.npz`, or male/female) | the body model. The licence allows non-commercial research and forbids redistribution: put the files in the project's `models` folder, not in the data folder `C:\lidar`; commands find them by file name (`--model SMPLX_MALE.npz`), and `.gitignore` excludes `SMPLX_*` and every `.npz`, so they are never committed |
 
 Without SMPL-X, `python -m bodyscan make-test-body testbody.npz` writes a
 procedural body in the same file format (capsules and ellipsoids, 55 joints,
@@ -453,7 +453,7 @@ from bodyscan.dynamic.motions import PoseSequence
 
 motion = PoseSequence.load("s01_walk01_motion.npz")          # times (sensor clock), root, joint rotations
 avatar = Avatar.load("s01_avatar.npz")
-model = avatar.model("C:/smplx/SMPLX_NEUTRAL.npz", "cpu")
+model = avatar.model("SMPLX_NEUTRAL.npz", "cpu")
 body = avatar.shaped(model)                                  # the person's body, at the avatar's level
 times = motion.times[0] + np.array([3.0, 3.005])             # 3 s into the take, and 5 ms later
 vertices, joints = motion.sample(times).posed(body)          # (2, V, 3) and (2, 55, 3), metres

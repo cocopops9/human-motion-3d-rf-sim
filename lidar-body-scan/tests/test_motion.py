@@ -458,3 +458,19 @@ class TrackingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_find_model_falls_back_to_the_project_models_folder(tmp_path, monkeypatch):
+    from bodyscan.body import model as body_model
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "SMPLX_MALE.npz").write_bytes(b"x")
+    monkeypatch.setattr(body_model, "MODEL_FOLDERS", (models, tmp_path))
+    assert body_model.find_model("C:/lidar/SMPLX_MALE.npz") == models / "SMPLX_MALE.npz"   # data folder: not there
+    assert body_model.find_model("SMPLX_MALE.npz") == models / "SMPLX_MALE.npz"
+    explicit = tmp_path / "other.npz"
+    explicit.write_bytes(b"x")
+    assert body_model.find_model(explicit) == explicit
+    import pytest
+    with pytest.raises(SystemExit):
+        body_model.find_model("SMPLX_FEMALE.npz")
