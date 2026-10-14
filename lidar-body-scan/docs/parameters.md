@@ -714,6 +714,7 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 |---|---|---|---|
 | `--level` | `0` | subdivision level of the avatar used for tracking (0: model resolution, the fastest; the export can use a finer level) |  |
 | `--device` | `auto` | PyTorch device: auto (CUDA when available), cpu, cuda |  |
+| `--precision` | `auto` | floating point precision: auto (float32 on a GPU, float64 on a CPU), float32, float64 | float32 on a CPU: about 30 % faster refinement, same mean joint error on a synthetic walk |
 | `--robust-scale` | `0.03` m | distance at which a point stops counting fully (Geman-McClure) | larger: smoother but more biased by stray points; smaller: needs a good start |
 | `--point-to-point` | `0.1` | weight of the point-to-point distance next to the point-to-plane one |  |
 | `--max-correspondence` | `0.25` m | points farther than this from the visible body are ignored |  |

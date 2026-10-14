@@ -1,5 +1,15 @@
 # Changelog
 
+## Tracking: progress of stage 2, precision option (2026-10-14)
+
+- The progress of the whole-sequence refinement counted correspondence rounds
+  instead of windows ("2/5" printed for every window, with a wrong remaining
+  time); it now counts windows.
+- `track` prints which frames it tracks (`--start`, `--stop`) and the precision.
+- New `--precision auto|float32|float64` (auto: float32 on a GPU, float64 on a
+  CPU). On a CPU float32 made the refinement about 30 % faster on a synthetic
+  walk (79 frames), with the same mean joint error (18.9 mm both).
+
 ## Body models live with the code (2026-10-14)
 
 - `C:\lidar` is data only. The SMPL-X files go in the project's `models`
