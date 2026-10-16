@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Narration Recorder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+:root { --bg:#0c1514; --surface:#13201e; --fg:#e9f2f0; --muted:#8fa9a4; --line:#24372f; --accent:#3fd0b9; --rec:#f06b55; --done:#5fd18a; color-scheme: dark;
+  --display:"Fraunces",Georgia,serif; --body:"Inter Tight",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--body); font-size:16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+main { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; }
+h1 { font-family:var(--display); font-weight:600; font-size:1.45rem; margin:0; }
+.count { font-family:var(--mono); font-size:.85rem; color:var(--muted); }
+.card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:14px; }
+.meta { display:flex; gap:10px; align-items:center; font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.num { font-family:var(--mono); color:var(--accent); letter-spacing:0; font-size:.95rem; }
+.state { margin-left:auto; text-transform:none; letter-spacing:0; font-size:.85rem; }
+.state.ok { color:var(--done); }
+#text { font-family:var(--display); font-weight:500; font-size:clamp(1.4rem,5vw,2.1rem); line-height:1.32; margin:0; min-height:4.2em; }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+button { font:600 1rem var(--body); border-radius:12px; border:1px solid var(--line); background:var(--surface); color:var(--fg); padding:12px 16px; cursor:pointer; }
+button:disabled { opacity:.4; }
+button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+#rec { background:var(--rec); border-color:var(--rec); color:#fff; flex:1 1 180px; padding:16px; font-size:1.1rem; }
+#rec.on { animation:pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity:.7; } }
+#timer { font-family:var(--mono); color:var(--muted); min-width:4ch; }
+#msg { font-size:.92rem; color:var(--muted); margin:0; min-height:1.3em; }
+#msg.err { color:var(--rec); }
+audio { width:100%; }
+.strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(44px,1fr)); gap:6px; }
+.chip { font:500 .85rem var(--mono); padding:9px 0; border-radius:8px; background:transparent; color:var(--muted); }
+.chip.done { background:rgba(95,209,138,.16); border-color:var(--done); color:var(--fg); }
+.chip.cur { outline:2px solid var(--accent); outline-offset:1px; color:var(--fg); }
+#send { background:var(--accent); color:#06201c; border-color:var(--accent); flex:1 1 220px; }
+.help { font-size:.88rem; color:var(--muted); line-height:1.5; margin:0; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Narration Recorder</h1><span class="count" id="count"></span></header>
+  <section class="card">
+    <div class="meta"><span class="num" id="num"></span><span id="part"></span><span class="state" id="state"></span></div>
+    <p id="text"></p>
+    <div class="row">
+      <button id="rec" type="button">● Record</button><span id="timer"></span>
+    </div>
+    <audio id="player" controls hidden></audio>
+    <div class="row">
+      <button id="prev" type="button">← Prev</button>
+      <button id="next" type="button">Next →</button>
+    </div>
+    <p id="msg"></p>
+  </section>
+  <div class="strip" id="strip"></div>
+  <div class="row"><button id="send" type="button">Send all takes to Claude</button></div>
+  <p class="help">Tap Record, read the sentence, tap Stop. Listen back; tap Record again to redo it. Takes stay on this phone even if you close the page. When you finish (or want to send a batch), tap "Send all takes to Claude" and pick the Claude app, or save the zip and attach it in the chat. Files are named by sentence number.</p>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const SCRIPT = [{"n": "1", "part": "Opening", "text": "How do you put a real, moving person inside a radio simulator?"}, {"n": "2", "part": "Radio echoes", "text": "Radio waves, like those of a radar, bounce off the human body."}, {"n": "3", "part": "Radio echoes", "text": "When we walk, the torso, arms and legs all move at different speeds."}, {"n": "4", "part": "Radio echoes", "text": "Each speed slightly shifts the frequency of the echo: this is the micro-Doppler effect."}, {"n": "5", "part": "Radio echoes", "text": "Drawn over time, these shifts form a signature of the movement."}, {"n": "6", "part": "Radio echoes", "text": "Walking, running and jumping each leave a different signature."}, {"n": "7", "part": "Why it matters", "text": "Understanding these echoes allows us to sense people through radio waves, without cameras or wearables."}, {"n": "8", "part": "Why it matters", "text": "Sensing people through radio waves serves many purposes."}, {"n": "9", "part": "Why it matters", "text": "For example, in health care, a radar can follow breathing during sleep and detect a fall at home."}, {"n": "10", "part": "Why it matters", "text": "In cars, a radar can find a child left in a parked car."}, {"n": "11", "part": "Why it matters", "text": "Even a home Wi-Fi router can sense people: it can alert the family if an elderly person living alone stops moving, or falls."}, {"n": "12", "part": "Why it matters", "text": "Future 6G phone networks will sense too: street antennas could spot a person walking on a highway and warn approaching cars."}, {"n": "13", "part": "Why it matters", "text": "At very high frequencies, a person walking by can block the signal. Predicting our movements lets the network reroute it in time."}, {"n": "14", "part": "Why it matters", "text": "All of these depend on how radio waves bounce off a moving human body."}, {"n": "15", "part": "Why simulate", "text": "Computers can learn to recognise the signatures, but they need many examples."}, {"n": "16", "part": "Why simulate", "text": "Recording them for real is slow, while a simulator can produce thousands."}, {"n": "17", "part": "Why simulate", "text": "To create them we use Sionna RT, free software by NVIDIA: it rebuilds a room in 3D and follows every radio wave as it bounces off walls and people."}, {"n": "18", "part": "Why simulate", "text": "But the simulated echoes are only realistic if the virtual people have a real body shape and move like real people."}, {"n": "19", "part": "Why simulate", "text": "This project builds virtual people, with their shape and their motion, from real ones."}, {"n": "20", "part": "The sensor", "text": "Everything is measured by a LiDAR: 128 laser beams spinning ten times per second."}, {"n": "21", "part": "The sensor", "text": "Every tenth of a second, it measures the distance to about 260,000 points around it: together they form a 3D picture of the room."}, {"n": "22", "part": "The sensor", "text": "The same turn can be unrolled into a panoramic image, one row per beam."}, {"n": "23", "part": "The sensor", "text": "To find the person, I first record the empty room. Then I compare: whatever was not there before, and is shaped like a person, is the person."}, {"n": "24", "part": "Part 1 \u00b7 Shape", "text": "Part 1: the shape of the body."}, {"n": "25", "part": "Part 1 \u00b7 Shape", "text": "The person stands still on a rotating platform."}, {"n": "26", "part": "Part 1 \u00b7 Shape", "text": "One full turn takes 90 seconds, and each frame sees only the side of the body facing the sensor."}, {"n": "27", "part": "Part 1 \u00b7 Shape", "text": "The software measures how far the platform has turned in every frame,"}, {"n": "28", "part": "Part 1 \u00b7 Shape", "text": "turns each view back by that angle, and merges them all into one cloud of points."}, {"n": "29", "part": "Part 1 \u00b7 Mesh", "text": "These points are then joined into a closed surface made of tiny triangles: a mesh."}, {"n": "30", "part": "Part 1 \u00b7 Mesh", "text": "But the rows of laser beams leave fine stripes on it."}, {"n": "31", "part": "Part 1 \u00b7 Mesh", "text": "For a radio wave, a bumpy surface is like a broken mirror: it scatters the rays in the wrong directions."}, {"n": "32", "part": "Part 1 \u00b7 Mesh", "text": "A smoothing step removes the stripes, while keeping the shape and the volume of the body."}, {"n": "33", "part": "Part 1 \u00b7 Mesh", "text": "After smoothing, 99 percent of the triangles are tilted by less than 5 degrees, instead of 18."}, {"n": "34", "part": "Part 1 \u00b7 Result", "text": "The result is a closed 3D model of the person, with no holes, ready for the simulator."}, {"n": "35", "part": "Part 2 \u00b7 Motion", "text": "Part 2: the motion."}, {"n": "36", "part": "Part 2 \u00b7 Motion", "text": "Now the person walks, runs and jumps freely around the same sensor."}, {"n": "37", "part": "Part 2 \u00b7 Motion", "text": "But a single sensor only sees the side of the body that faces it."}, {"n": "38", "part": "Part 2 \u00b7 Motion", "text": "So a digital body model, shaped like the person's own scan, is fitted to the laser points of every frame."}, {"n": "39", "part": "Part 2 \u00b7 Motion", "text": "Simple rules fill in the hidden side:"}, {"n": "40", "part": "Part 2 \u00b7 Motion", "text": "joints bend naturally, feet do not slide, and the motion stays smooth."}, {"n": "41", "part": "Part 2 \u00b7 Result", "text": "The result is an animated 3D body: one model for every instant, with the speed of every point of the skin."}, {"n": "42", "part": "Part 2 \u00b7 Result", "text": "These speeds are exactly what creates the micro-Doppler in the simulated radar echo."}, {"n": "43", "part": "Part 2 \u00b7 Result", "text": "Tested on simulated walks, where the true motion is known,"}, {"n": "44", "part": "Part 2 \u00b7 Result", "text": "joints are placed within 1 to 2 centimetres, and body-part speeds within 0.1 to 0.15 metres per second."}, {"n": "45", "part": "Summary", "text": "The whole process, from the laser scan to the simulator, runs with a few commands, and the code is public."}, {"n": "46", "part": "Summary", "text": "Next: processing the real recordings of walking, running and jumping,"}, {"n": "47", "part": "Summary", "text": "and the first radio simulations with these virtual people."}];
+const $ = (id) => document.getElementById(id);
+let cur = 0, takes = {}, rec = null, stream = null, t0 = 0, tick = null, url = null;
+
+// IndexedDB keeps the takes on the phone
+const dbp = new Promise((res, rej) => { const r = indexedDB.open('narration', 1); r.onupgradeneeded = () => r.result.createObjectStore('takes'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function idb(mode, fn) { const db = await dbp; return new Promise((res, rej) => { const tx = db.transaction('takes', mode); const st = tx.objectStore('takes'); const q = fn(st); tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); }); }
+async function loadAll() { const db = await dbp; return new Promise((res) => { const out = {}; const tx = db.transaction('takes'); tx.objectStore('takes').openCursor().onsuccess = (e) => { const c = e.target.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); }; }); }
+
+function say(t, err) { $('msg').textContent = t || ''; $('msg').className = err ? 'err' : ''; }
+function render() {
+  const s = SCRIPT[cur], tk = takes[s.n];
+  $('num').textContent = '#' + s.n; $('part').textContent = s.part; $('text').textContent = s.text;
+  $('state').textContent = tk ? 'recorded' : 'not recorded'; $('state').className = 'state' + (tk ? ' ok' : '');
+  $('prev').disabled = cur === 0 || !!rec; $('next').disabled = cur === SCRIPT.length - 1 || !!rec;
+  $('count').textContent = Object.keys(takes).length + ' / ' + SCRIPT.length + ' recorded';
+  document.querySelectorAll('.chip').forEach((c, i) => { c.classList.toggle('done', !!takes[SCRIPT[i].n]); c.classList.toggle('cur', i === cur); });
+  if (url) { URL.revokeObjectURL(url); url = null; }
+  if (tk) { url = URL.createObjectURL(tk.blob); $('player').src = url; $('player').hidden = false; } else { $('player').hidden = true; }
+  $('rec').textContent = rec ? '■ Stop' : (tk ? '● Record again' : '● Record');
+}
+function go(i) { if (rec) return; cur = Math.max(0, Math.min(SCRIPT.length - 1, i)); say(''); render(); }
+
+$('rec').onclick = async () => {
+  if (rec) { rec.stop(); return; }
+  try {
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 } });
+  } catch (e) { say('Microphone blocked. Allow microphone access for this site in the browser settings, then tap Record again.', true); return; }
+  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  const chunks = [], n = SCRIPT[cur].n;
+  rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : {});
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = async () => {
+    clearInterval(tick); $('rec').classList.remove('on'); $('timer').textContent = '';
+    const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); rec = null;
+    const v = { blob, mime: blob.type, at: Date.now() };
+    takes[n] = v; await idb('readwrite', (st) => st.put(v, n));
+    say('Take #' + n + ' saved on this phone.'); render();
+  };
+  rec.start(); t0 = Date.now(); $('rec').classList.add('on');
+  tick = setInterval(() => { const s = (Date.now() - t0) / 1000; $('timer').textContent = Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }, 250);
+  say('Recording… tap Stop at the end of the sentence.'); render();
+};
+$('prev').onclick = () => go(cur - 1);
+$('next').onclick = () => go(cur + 1);
+$('send').onclick = async () => {
+  const keys = Object.keys(takes); if (!keys.length) { say('Record at least one sentence first.', true); return; }
+  say('Packing ' + keys.length + ' takes…');
+  const zip = new JSZip();
+  for (const k of keys) { const t = takes[k]; const ext = t.mime.includes('mp4') ? 'm4a' : 'webm'; zip.file(String(k).padStart(2, '0') + '.' + ext, t.blob); }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const file = new File([blob], 'narration_takes.zip', { type: 'application/zip' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Narration takes' }); say('Shared. Attach it in the Claude chat if it did not open there.'); return; } catch (e) { if (e.name === 'AbortError') { say(''); return; } }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'narration_takes.zip'; document.body.appendChild(a); a.click(); a.remove();
+  say('Saved narration_takes.zip to Downloads. Attach it in the Claude chat.');
+};
+SCRIPT.forEach((s, i) => { const b = document.createElement('button'); b.className = 'chip'; b.type = 'button'; b.textContent = s.n; b.onclick = () => go(i); $('strip').appendChild(b); });
+render();
+loadAll().then((all) => { takes = all; const f = SCRIPT.findIndex((s) => !takes[s.n]); cur = f < 0 ? 0 : f; render(); }).catch(() => say('Takes cannot be kept after closing this page in this browser.', true));
+</script>
+</body>
+</html>
