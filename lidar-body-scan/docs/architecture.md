@@ -151,13 +151,17 @@ the body of one person.
 
 The tracker (`dynamic.track.Tracker`) is an energy minimised with L-BFGS:
 `frame_energy` holds the terms of one frame (data, silhouette and free
-space, in front of the measured surface, floor), `fit_frame` adds the joint
-limits, the twist prior and the continuity to the prediction, `refine` adds
-over a window the smoothness of the joint motion (jerk), the no-sliding of
-standing feet and the rolling shutter; `recover_limbs` refits a frame from
-other starts when points stay unexplained. A new term goes into one of these
-functions with its weight in `TrackConfig` or `RefineConfig`; a new starting
-pose of the search into `LEG_STARTS` or `ARM_STARTS`.
+space, in front of the measured surface, floor; `free_space_loss` shapes the
+free-space penalties), `fit_frame` adds the joint limits, the neutral priors
+(`neutral_priors`: spine and hip twist, neck and head, forearm twist and
+wrists) and the continuity to the prediction, `refine` adds over a window the
+smoothness of the joint motion (jerk), the no-sliding of standing feet and the
+rolling shutter; `recover_limbs` refits a frame from other starts when points
+stay unexplained or body lies in empty space (`limbs_to_search` picks the
+limbs near the misfit; the trunk search untwists and turns the body). A new
+term goes into one of these functions with its weight in `TrackConfig` or
+`RefineConfig`; a new starting pose of the search into `LEG_STARTS` or
+`ARM_STARTS`.
 
 ### Commands register themselves (`commands.base`)
 

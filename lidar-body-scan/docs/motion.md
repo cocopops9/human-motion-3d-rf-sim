@@ -202,31 +202,52 @@ points. The terms:
 | Term | What it asks |
 |---|---|
 | data | every point of the person close to the surface of the body that the sensor can see (robust point-to-plane distance plus a little point-to-point; only faces facing the sensor and not hidden by other parts take correspondences) |
-| silhouette, free space | no part of the body where the sensor saw through to the background: a vertex that projects onto a pixel whose measured range lies beyond it (outside the crop: where the empty room lies beyond it and no person was found) is pulled towards the person's silhouette (a distance map of the crop, in angle, times the range). A vertex behind furniture is not pulled |
-| in front | no part of the body in front of the measured surface |
-| limits | the anatomical joint limits (bodyscan.body.skeleton: knees and elbows bend one way, and so on) |
+| silhouette, free space | no part of the body where the sensor saw through to the background: a vertex that projects onto a pixel whose measured range lies beyond it (outside the crop: where the empty room lies beyond it and no person was found) is pulled towards the person's silhouette (a distance map of the crop, in angle, times the range). A vertex behind furniture is not pulled. Columns lost with a UDP packet (no return in the whole crop height where the empty room returns) are unknown, not empty. The penalty (`--free-space-loss wide`) is a robust term at `--silhouette-scale` (6 cm) plus one at four times that scale: a limb 20 to 50 cm out in empty space is still pulled back, while the bound stays that of version 1.3, so leaving the points altogether never pays (`bounded`: the robust term alone, version 1.3) |
+| in front | no part of the body in front of the measured surface (same penalty) |
+| limits | the anatomical joint limits (bodyscan.body.skeleton: knees and elbows bend one way, and so on). Since version 1.4 the spine, neck and head keep adult ranges: trunk twist about ±40 deg and side bend about ±45 deg in all, head turn about ±80 deg, tilt ±45 deg |
 | twist | the twist of the spine and the rotation of the thighs about their own axis stay small (weak, `--twist-weight`): otherwise the pelvis can turn while the trunk and the legs turn back by as much, which the points hardly tell apart |
+| head | the neck and head rotations stay near upright and facing forward (weak, `--head-weight`): the head is round, its points hardly tell how it is turned |
+| forearms | the twist of the forearms about their axis and the wrist rotations stay near rest (weak, `--forearm-twist-weight`) |
 | floor | no foot vertex below the floor |
 | continuity | joint rotations and root close to the prediction; weak for what the sensor sees, up to 11 times stronger for a body part seen less than 30 % (`--hidden-continuity`), so that a hidden limb keeps its motion instead of jumping wherever a few points pull it |
 | hidden arms | an arm seen less than 30 % is pulled slowly towards hanging (`--relax-hidden-arms`, 0 to switch off): an arm nobody sees is most likely hanging; tracking starts with the arms hanging, so that the scan's A-pose does not stay on an arm the sensor never sees |
 
+Each frame is fitted with `--iterations` (30) L-BFGS iterations per round;
+version 1.3 stopped at 12, before the fit converged: on synthetic jumps the
+joint error was about 14 mm instead of 11 mm, the head turned by up to 20 deg
+for nothing, and the unconverged frames needed limb searches.
+
 The first frame is fitted from 8 facing directions; a frame whose points lie
 more than `--lost-residual` (5 cm, median) from the body is fitted again from
-several directions. When more than `--recover-fraction` (2 %, and at least
-10) of the points remain farther than `--recover-distance` (6 cm) from the
-body after the fit, a limb is probably in the wrong place: in a jump the arms
-swing overhead in 0.3 s and the knees fold at the landing, faster than the
-prediction follows. The frame is then fitted again from other starts: the
-previous frame's pose, both legs from three poses (standing, half squat, deep
-squat), each arm from eight (A-pose, hanging, elbow bent, out to the side,
-forward, up in front, up at the side, back). Each start first moves only its
-limb, and is kept when it explains the points better (mean point distance
-capped at 15 cm, plus a penalty for body in free space, 2 mm better at
-least); an arm only when the sensor sees at least 20 % of it there, since no
-point can justify moving an arm the sensor does not see. Without this search
-a lost limb can stay wrong for the rest of the take (an arm hidden behind the
-body, legs landing feet forward instead of knees forward), because nothing
-pulls it back.
+several directions. After a gap of more than `--gap-frames` (2.5) frame
+periods (frames dropped by the segmentation) the prediction keeps the last
+pose instead of extrapolating its velocity, which threw a moving leg away
+after a gap of 0.65 s. When more than `--recover-fraction` (2 %, and at
+least 10) of the points remain farther than `--recover-distance` (6 cm) from
+the body after the fit, a limb is probably in the wrong place: in a jump the
+arms swing overhead in 0.3 s and the knees fold at the landing, faster than
+the prediction follows. Likewise when more than `--recover-free-space` (3 %)
+of the visible body lies where the sensor saw empty space: an arm stretched
+into the air, or the trunk turned the wrong way when the person stands
+side-on. The frame is then fitted again from other starts: the previous
+frame's pose; the trunk, neck and head untwisted, with the whole body as it
+is and turned by ±`--yaw-search` (35 deg) (`--torso-search`); both legs from
+three poses (standing, half squat, deep squat); each arm from twelve
+(A-pose, hanging, elbow bent sideways, out to the side, forward, up in
+front, up at the side, back, and the arm carriages of running and jumping:
+elbow bent with the forearm forward, swung forward, swung back, swung forward
+and up). Only the limbs near the misfit are searched: each unexplained point
+counts for the limb with the nearest elbow, wrist, knee, ankle or foot, each
+vertex in free space for its own limb. Each start first moves only its limb,
+coarse to fine, and is kept when it explains the points better (mean point
+distance capped at 15 cm, plus a penalty for body in free space, 2 mm better
+at least); an arm only when the sensor sees at least 20 % of it there, or
+when the move explains points left unexplained (the hand of the far arm over
+the head) or takes the arm out of empty space, since no point can justify
+moving an arm the sensor does not see. Without this search a lost limb can
+stay wrong for the rest of the take (an arm hidden behind the body, legs
+landing feet forward instead of knees forward), because nothing pulls it
+back.
 
 Stage 2 refines the whole sequence in windows of 40 frames overlapping by 10:
 the same terms for every frame (coarse to fine again), plus
@@ -248,8 +269,9 @@ body, median), `unexplained` (more than 5 % of the points between 5 cm
 and `max_correspondence`, 25 cm, from the body: a limb in the wrong place;
 farther points are clutter no limb can reach, reported as
 `clutter_fraction_mean` in the summary and never a reason to search the
-limbs again), `free_space` (more than 5 % of the
-visible vertices where the sensor saw through), `below_floor` (a foot 2 cm
+limbs again), `free_space` (more than 3 % of the
+visible vertices where the sensor saw through; 5 % before version 1.4, which
+let a whole arm in empty space pass unflagged), `below_floor` (a foot 2 cm
 below the floor), `sliding` (a standing foot moving faster than 0.3 m/s),
 `joint_limits` (a limit exceeded by more than 10 deg), `acceleration` (a
 joint accelerating more than 120 m/s²).

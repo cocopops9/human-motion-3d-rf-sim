@@ -67,27 +67,31 @@ for _j in range(40, 55):
 PART_NAMES = tuple(dict.fromkeys(PART_OF_JOINT[j] for j in range(NUM_JOINTS)))
 
 # Soft anatomical limits of the body joints, per axis-angle component in the
-# parent frame [deg]: ((x min, x max), (y min, y max), (z min, z max)). They are
-# deliberately wide: their job is to forbid what no person can do (a knee or an
+# parent frame [deg]: ((x min, x max), (y min, y max), (z min, z max)). Limbs:
+# deliberately wide, their job is to forbid what no person can do (a knee or an
 # elbow bent backwards, a foot turned around), not to model the exact range of
-# motion. A box on axis-angle components is exact for one-axis rotations and an
+# motion. Spine, neck and head: the ranges of an adult spread over the joints
+# (trunk twist about +-40 deg and side bend about +-45 deg in all, neck and head
+# turn about +-80 deg, tilt +-45 deg, nod 75 deg forward and 65 back), because the
+# LiDAR hardly sees them and wider boxes let the tracker twist them (version 1.3).
+# A box on axis-angle components is exact for one-axis rotations and an
 # approximation for combined ones.
 LIMITS_DEG = {
     1: ((-130, 35), (-50, 50), (-35, 65)),      # left hip: flexion is -x, abduction +z
     2: ((-130, 35), (-50, 50), (-65, 35)),      # right hip: abduction -z
-    3: ((-30, 55), (-35, 35), (-30, 30)),       # spine1
+    3: ((-25, 50), (-12, 12), (-20, 20)),       # spine1 (lumbar): forward +x, twist y, side bend z
     4: ((-6, 155), (-25, 25), (-12, 12)),       # left knee: bends +x only
     5: ((-6, 155), (-25, 25), (-12, 12)),       # right knee
-    6: ((-25, 35), (-30, 30), (-25, 25)),       # spine2
+    6: ((-15, 30), (-15, 15), (-15, 15)),       # spine2
     7: ((-35, 55), (-35, 35), (-30, 30)),       # left ankle: dorsiflexion -x
     8: ((-35, 55), (-35, 35), (-30, 30)),       # right ankle
-    9: ((-25, 35), (-30, 30), (-25, 25)),       # spine3
+    9: ((-15, 25), (-15, 15), (-12, 12)),       # spine3
     10: ((-60, 30), (-15, 15), (-15, 15)),      # left toes
     11: ((-60, 30), (-15, 15), (-15, 15)),      # right toes
-    12: ((-45, 55), (-60, 60), (-45, 45)),      # neck
+    12: ((-35, 45), (-40, 40), (-25, 25)),      # neck
     13: ((-25, 25), (-35, 35), (-20, 45)),      # left collar: shoulder up is +z
     14: ((-25, 25), (-35, 35), (-45, 20)),      # right collar
-    15: ((-45, 45), (-70, 70), (-35, 35)),      # head
+    15: ((-30, 30), (-40, 40), (-20, 20)),      # head
     16: ((-110, 110), (-170, 70), (-115, 95)),  # left shoulder: forward -y, down -z
     17: ((-110, 110), (-70, 170), (-95, 115)),  # right shoulder: forward +y, down +z
     18: ((-100, 100), (-160, 6), (-20, 20)),    # left elbow: bends -y only (twist on x)

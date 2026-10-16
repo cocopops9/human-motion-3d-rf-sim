@@ -4,7 +4,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.3.0-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.4.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
 ![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)

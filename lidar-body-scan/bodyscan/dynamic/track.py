@@ -84,12 +84,27 @@ class TrackConfig:
     silhouette_weight: float = param(2.0, "weight of the silhouette and free-space term",
                                      effect="larger keeps hidden limbs out of the free space more firmly")
     silhouette_scale: float = param(0.06, "robust scale of the silhouette distances", unit="m")
+    free_space_loss: str = param("wide", "how the free-space terms grow with the distance of a vertex from "
+                                         "where the sensor allows it: wide (a robust term at the scale plus one "
+                                         "at 4 times the scale: a limb 20 to 50 cm out in empty space is still "
+                                         "pulled back) or bounded (the robust term alone: the pull fades beyond "
+                                         "about two scales; version 1.3). Both are bounded, so that leaving the "
+                                         "points altogether never pays", choices=("wide", "bounded"),
+                                 effect="bounded lets a limb the sensor sees as empty space stay there "
+                                        "(arms stretched into the air, a twisted trunk)")
     free_space_margin: float = param(0.06, "a vertex counts as in free space when the sensor saw this much "
                                            "beyond it", unit="m")
     limit_weight: float = param(5.0, "weight of the anatomical joint limits")
     twist_weight: float = param(0.05, "weight pulling the twist of the spine and the rotation of the hips about "
                                       "the legs towards zero [per rad^2]: the pelvis can turn and the trunk and "
                                       "legs turn back by as much, which the points hardly tell apart")
+    head_weight: float = param(0.05, "weight pulling the neck and head rotations towards upright and facing "
+                                     "forward [per rad^2]: the head is round, its points hardly tell how it is "
+                                     "turned or tilted",
+                               effect="0: the head turns and tilts freely (the weird head angles of version 1.3)")
+    forearm_twist_weight: float = param(0.02, "weight pulling the twist of the forearms (about their long axis) "
+                                              "and the wrist rotations towards rest [per rad^2]: the points of a "
+                                              "forearm and of a relaxed hand hardly show them")
     floor_weight: float = param(5.0, "weight of the no-foot-below-the-floor term")
     pose_continuity: float = param(0.05, "weight of the joint rotations staying near the prediction "
                                          "(constant velocity) [per rad^2]",
@@ -103,7 +118,10 @@ class TrackConfig:
                                           "more of it is seen): an arm nobody sees is most likely hanging",
                                      effect="larger: a hidden arm drops faster; 0: it keeps its last pose")
     rounds: int = param(3, "correspondence rounds per frame")
-    iterations: int = param(12, "L-BFGS iterations per round")
+    iterations: int = param(30, "L-BFGS iterations per round",
+                            effect="12 (version 1.3) stops before the fit converges: on synthetic jumps the joint "
+                                   "error rose from about 11 to 14 mm, the head turned by up to 20 deg, and the "
+                                   "unconverged frames needed limb searches")
     coarse_scale: float = param(4.0, "robust scale of the first round, as a multiple of robust_scale (halved every "
                                      "round down to robust_scale)",
                                 effect="larger: catches faster limbs, but stray points pull more in the first round")
@@ -114,6 +132,18 @@ class TrackConfig:
     recover_fraction: float = param(0.02, "fraction of unexplained points above which the frame is fitted again "
                                           "from other starts: the previous pose, legs, arms (0: never)",
                                     effect="smaller: more searches (about 5 s per frame on a CPU)")
+    recover_free_space: float = param(0.03, "fraction of the visible body lying where the sensor saw empty space "
+                                            "above which the frame is also fitted again from other starts (0: "
+                                            "never)",
+                                      effect="0: a limb or a turned trunk placed in empty space is never searched "
+                                             "again (version 1.3)")
+    torso_search: bool = param(True, "the search of a poorly fitted frame also tries the trunk, neck and head "
+                                     "untwisted, and the whole body turned by +-yaw_search")
+    yaw_search: float = param(35.0, "turn of the body tried by the trunk search", unit="deg")
+    gap_frames: float = param(2.5, "after more than this many frame periods without a tracked frame (frames "
+                                   "dropped by the segmentation) the prediction keeps the last pose instead of "
+                                   "extrapolating its velocity, and the limbs are searched again",
+                              effect="large: a limb in motion before a gap is thrown on along its velocity")
 
 
 @dataclass
@@ -159,12 +189,72 @@ ARM_STARTS = (
     (15, 160, 0, 10),       # up, in front
     (165, 0, 90, 10),       # up, at the side
     (15, -40, 0, 15),       # back
+    (10, 0, 0, 90),         # hanging, elbow bent, forearm forward (jogging, carrying)
+    (10, 35, 0, 95),        # running, swung forward: forearm forward and up
+    (10, -35, 0, 95),       # running, swung back: forearm forward, elbow behind the trunk
+    (20, 60, 0, 30),        # swinging forward and up (a jump's take-off)
 )
 
 
 # Joints whose rotation about the long axis (y in the T-pose frames: the spine,
 # the thighs) trades with a turn of the pelvis (indices into the 21 body joints).
 TWIST_JOINTS = [skeleton.JOINT[name] - 1 for name in ("spine1", "spine2", "spine3", "left_hip", "right_hip")]
+
+# Neck and head (indices into the 21 body joints): pulled towards upright by head_weight.
+HEAD_JOINTS = [skeleton.JOINT[name] - 1 for name in ("neck", "head")]
+
+# Forearm twist: the x component of the elbow rotation (the elbow bends about y); and the
+# wrists, all three components: pulled towards rest by forearm_twist_weight.
+ELBOW_JOINTS = [skeleton.JOINT[name] - 1 for name in ("left_elbow", "right_elbow")]
+WRIST_JOINTS = [skeleton.JOINT[name] - 1 for name in ("left_wrist", "right_wrist")]
+
+# The trunk, neck and head joints reset by the trunk search (twist and side bend only; the
+# forward bend stays), and the limbs of the searches (indices into the 21 body joints).
+TRUNK_JOINTS = [skeleton.JOINT[name] - 1 for name in ("spine1", "spine2", "spine3")]
+LIMB_JOINT_NAMES = {
+    "legs": [f"{side}_{name}" for side in ("left", "right") for name in ("hip", "knee", "ankle")],
+    "left_arm": [f"left_{name}" for name in ("collar", "shoulder", "elbow", "wrist")],
+    "right_arm": [f"right_{name}" for name in ("collar", "shoulder", "elbow", "wrist")],
+}
+# Body parts (skeleton.PART_NAMES) of each limb, to tell which limb a misfit belongs to.
+LIMB_PARTS = {
+    "legs": ("left_thigh", "right_thigh", "left_shank", "right_shank", "left_foot", "right_foot"),
+    "left_arm": ("left_upper_arm", "left_forearm", "left_hand"),
+    "right_arm": ("right_upper_arm", "right_forearm", "right_hand"),
+}
+# Joints (full skeleton) that stand for each limb when a point is assigned to the nearest limb.
+LIMB_JOINTS = {
+    "legs": ("left_knee", "right_knee", "left_ankle", "right_ankle", "left_foot", "right_foot"),
+    "left_arm": ("left_elbow", "left_wrist"),
+    "right_arm": ("right_elbow", "right_wrist"),
+    "trunk": ("pelvis", "spine2", "spine3", "neck", "head", "left_shoulder", "right_shoulder", "left_hip",
+              "right_hip"),
+}
+
+
+def neutral_priors(body, config) -> object:
+    """Soft priors of a body pose (torch, (..., 21, 3)) towards neutral where the points tell
+    little: spine and hip twist, neck and head, forearm twist and wrists."""
+    energy = config.twist_weight * (body[..., TWIST_JOINTS, 1] ** 2).sum()
+    if config.head_weight > 0:
+        energy = energy + config.head_weight * (body[..., HEAD_JOINTS, :] ** 2).sum()
+    if config.forearm_twist_weight > 0:
+        energy = energy + config.forearm_twist_weight * ((body[..., ELBOW_JOINTS, 0] ** 2).sum()
+                                                          + (body[..., WRIST_JOINTS, :] ** 2).sum())
+    return energy
+
+
+def free_space_loss(distance, scale: float, kind: str):
+    """Penalty of a free-space distance [m] (torch), in the units of geman_mcclure(d, scale)
+    (bounded by scale^2). 'bounded': Geman-McClure at the scale. 'wide': 0.6 of it plus 0.4 of a
+    Geman-McClure at 4 times the scale (rescaled to the same bound): the same bound, so leaving
+    the points for empty space never pays more than before, but a pull that reaches about four
+    times farther (a limb 20 to 50 cm out in empty space is pulled back)."""
+    from bodyscan.dynamic.fitting import geman_mcclure
+    if kind == "bounded":
+        return geman_mcclure(distance, scale)
+    wide = 4.0 * scale
+    return 0.6 * geman_mcclure(distance, scale) + 0.4 * (scale / wide) ** 2 * geman_mcclure(distance, wide)
 
 # Starting poses of both legs for the same search: (hip flexion, knee flexion,
 # ankle dorsiflexion) [deg]: standing, half squat, deep squat (a landing).
@@ -219,6 +309,12 @@ class FrameData:
         # pixels there, so the sensor did not clearly see through it
         from bodyscan.dynamic.segment import _dilate
         self.uncertain = _dilate(self.mask > 0, 1)
+        # columns lost with a UDP packet: no return in the whole crop height although the empty
+        # scene returns there; the sensor saw nothing of them, so they are not free space
+        with np.errstate(invalid="ignore"):
+            self.lost_columns = (np.all(~np.isfinite(self.crop_range), axis=0)
+                                 & (np.mean(np.isfinite(self.crop_background), axis=0) > 0.5))
+        self.uncertain[:, self.lost_columns] = True
         silhouette = distance_map(self.uncertain, geometry.vertical_step, geometry.column_step)
         self.distance = torch.as_tensor(silhouette, dtype=dtype, device=device)
         self.center = person.center
@@ -283,6 +379,9 @@ class Tracker:
         segmentation = segmented.summary.get("config", {})
         self.foreground_margin = float(segmentation.get("bg_threshold", 0.08)) + 0.02
         self.background_range = segmented.background_range                # (H, W) empty room [m], NaN: unknown
+        frame_times = segmented.times()
+        steps = np.diff(frame_times) if len(frame_times) > 1 else np.zeros(0)
+        self.frame_period = float(np.median(steps[steps > 0])) if np.any(steps > 0) else 0.05
 
     # -- posing ---------------------------------------------------------------------------------
     def rotations(self, body):
@@ -387,12 +486,14 @@ class Tracker:
             angle = inside + torch.sqrt((out_r * g.vertical_step) ** 2 + (out_c * g.column_step) ** 2 + 1e-12)
             lateral = angle * ranges
             scale = c.silhouette_scale
-            energy = energy + c.silhouette_weight * geman_mcclure(lateral, scale).sum() / scale ** 2 / match.visible_count
+            energy = energy + (c.silhouette_weight * free_space_loss(lateral, scale, c.free_space_loss).sum()
+                               / scale ** 2 / match.visible_count)
         if len(match.front):
             moved = vertices[match.front] if shifted_front is None else shifted_front
             _, _, ranges = g.project_torch(moved, self.tables, frame.reference_column, match.front_pixels)
             excess = torch.relu(match.front_range - ranges - c.free_space_margin)
-            energy = energy + c.silhouette_weight * geman_mcclure(excess, c.robust_scale).sum() / s2 / match.visible_count
+            energy = energy + (c.silhouette_weight * free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
+                               / s2 / match.visible_count)
         feet_z = vertices[self.feet, 2]
         energy = energy + c.floor_weight * (torch.relu(-feet_z) ** 2).mean() / s2
         return energy
@@ -452,7 +553,7 @@ class Tracker:
                 vertices, _ = self.pose(omega, reference_t, pos, b)
                 energy = self.frame_energy(vertices[0], frame, match, scale=scale)
                 energy = energy + c.limit_weight * limit_penalty(b)
-                energy = energy + c.twist_weight * (b[:, TWIST_JOINTS, 1] ** 2).sum()
+                energy = energy + neutral_priors(b, c)
                 if c.relax_hidden_arms > 0:
                     energy = energy + (((b[:, self.hanging_index] - hanging) ** 2) * relax).sum()
                 if prediction is not None:
@@ -501,9 +602,38 @@ class Tracker:
         # points beyond max_correspondence are clutter (no limb can reach them): never a reason
         # to search the limbs again
         far = (distance > c.recover_distance) & (distance < c.max_correspondence)
+        free = match.silhouette.cpu().numpy() if len(match.silhouette) else np.zeros(0, dtype=np.int64)
         return {"distance": distance, "unexplained": float(np.mean(far)), "unexplained_count": int(far.sum()),
                 "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * len(match.silhouette) / match.visible_count),
-                "visible": match.visible}
+                "visible": match.visible, "far": far, "free": len(match.silhouette) / match.visible_count,
+                "free_vertices": free}
+
+    def limbs_to_search(self, rotation, position, body, frame: FrameData, explained: dict) -> set:
+        """The limbs ('legs', 'left_arm', 'right_arm') and 'trunk' near the misfit of a frame: each
+        unexplained point counts for the limb with the nearest of its joints (LIMB_JOINTS), each
+        vertex in free space for the limb it belongs to."""
+        import torch
+        counts = {name: 0 for name in LIMB_JOINTS}
+        if explained["unexplained_count"]:
+            with torch.no_grad():
+                _, joints = self.pose(torch.zeros(1, 3, dtype=self.dtype, device=self.device),
+                                      torch.as_tensor(rotation, dtype=self.dtype, device=self.device)[None],
+                                      torch.as_tensor(position, dtype=self.dtype, device=self.device)[None],
+                                      torch.as_tensor(body, dtype=self.dtype, device=self.device)[None])
+            joints = joints[0].cpu().numpy()
+            names = list(LIMB_JOINTS)
+            anchors = np.concatenate([joints[[skeleton.JOINT[j] for j in LIMB_JOINTS[n]]] for n in names])
+            owner = np.concatenate([[k] * len(LIMB_JOINTS[n]) for k, n in enumerate(names)])
+            points = frame.points_np[explained["far"]]
+            nearest = np.argmin(np.linalg.norm(points[:, None] - anchors[None], axis=2), axis=1)
+            for k in owner[nearest]:
+                counts[names[k]] += 1
+        if len(explained["free_vertices"]):
+            parts = np.array(skeleton.PART_NAMES)[self.part_labels[explained["free_vertices"]]]
+            for limb, members in LIMB_PARTS.items():
+                counts[limb] += int(np.isin(parts, members).sum()) // 4      # vertices are denser than points
+            counts["trunk"] += int((~np.isin(parts, sum(LIMB_PARTS.values(), ()))).sum()) // 4
+        return {name for name, count in counts.items() if count >= 5}
 
     def joint_seen(self, visible: np.ndarray) -> np.ndarray:
         """(22,) fraction of the body part of each main joint (pelvis to wrists) that the sensor sees."""
@@ -524,42 +654,68 @@ class Tracker:
         members = np.isin(self.part_labels, parts)
         return float(visible[members].mean()) if members.any() else 0.0
 
-    def recover_limbs(self, frame: FrameData, result, prediction, previous=None):
+    def recover_limbs(self, frame: FrameData, result, prediction, previous=None, limbs=None, trunk=False):
         """Fit the frame again from other starts: the previous frame's pose (without the
-        prediction's velocity, which overshoots when a limb stops or turns), both legs from every
-        pose of LEG_STARTS (a landing: knees forward, not feet forward), then each arm from every
-        pose of ARM_STARTS. Each start first moves only its limb, at the fine scale (the rest of the
-        fit stays), and is kept when it lowers the score of explain() by 2 mm; an arm only when the
-        sensor sees that arm in the result (at least 20 % of it): no point can justify moving an
-        arm the sensor does not see. The pose kept is then fitted once more as a whole."""
+        prediction's velocity, which overshoots when a limb stops or turns); with 'trunk' the
+        trunk, neck and head untwisted with the body as it is and turned by +-yaw_search (a trunk
+        turned the wrong way puts the far half of the body where the sensor sees empty space);
+        both legs from every pose of LEG_STARTS (a landing: knees forward, not feet forward), then
+        each arm from every pose of ARM_STARTS. 'limbs' (a set of 'legs', 'left_arm', 'right_arm',
+        None for all) limits the searches to the limbs near the misfit. Each limb start first
+        moves only its limb (the rest of the fit stays), coarse to fine, and any start is kept
+        when it lowers the score of explain() by 2 mm; an arm only when the sensor sees that arm in
+        the result (at least 20 % of it), since no point can justify moving an arm the sensor does
+        not see, or when the move explains points left unexplained (5 and 30 % at least: the hand
+        of the far arm over the head) or takes the arm out of empty space (an arm in front of the
+        body where the sensor saw nothing goes behind it). The pose kept is then fitted once more
+        as a whole."""
+        from bodyscan.body.rotations import rotation_z_np
+        c = self.config.tracking
         best = result
         state = self.explain(best[0], best[1], best[2], frame)
         improved = False
 
         def attempt(trial, side=None):
+            # an arm the trial leaves mostly hidden is accepted when it explains points that were
+            # unexplained (the hand of the far arm over the head) or takes the arm out of empty
+            # space (fewer vertices in free space): then the sensor does tell where it is
             nonlocal best, state, improved
             trial_state = self.explain(trial[0], trial[1], trial[2], frame)
+            explains = trial_state["unexplained_count"] <= min(state["unexplained_count"] - 5,
+                                                               0.7 * state["unexplained_count"])
             if trial_state["score"] < state["score"] - 0.002 and (
-                    side is None or self._arm_seen(side, trial_state["visible"]) >= 0.2):
+                    side is None or self._arm_seen(side, trial_state["visible"]) >= 0.2 or explains
+                    or trial_state["free"] < state["free"] - 0.01):
                 best, state, improved = trial, trial_state, True
 
         if previous is not None:
             attempt(self.fit_frame(frame, previous[0], previous[1], previous[2], prediction, coarse=False))
-        legs = [skeleton.JOINT[f"{side}_{name}"] - 1 for side in ("left", "right") for name in ("hip", "knee", "ankle")]
-        for start in LEG_STARTS:
-            body = best[2].copy()
-            for index, value in _leg_rotations(*start).items():
-                body[index] = value
-            attempt(self.fit_frame(frame, best[0], best[1], body, prediction, rounds=2, iterations=10, coarse=False,
-                                   joints=legs))
+        if trunk and c.torso_search:
+            untwisted = best[2].copy()
+            untwisted[TRUNK_JOINTS, 1:] = 0.0                       # twist and side bend; the bend stays
+            untwisted[HEAD_JOINTS] = 0.0
+            rotation, position = best[0], best[1]
+            for yaw in (0.0, c.yaw_search, -c.yaw_search):
+                attempt(self.fit_frame(frame, rotation_z_np(np.radians(yaw)) @ rotation, position, untwisted,
+                                       prediction, rounds=2, iterations=10))
+        if limbs is None or "legs" in limbs:
+            legs = [skeleton.JOINT[name] - 1 for name in LIMB_JOINT_NAMES["legs"]]
+            for start in LEG_STARTS:
+                body = best[2].copy()
+                for index, value in _leg_rotations(*start).items():
+                    body[index] = value
+                attempt(self.fit_frame(frame, best[0], best[1], body, prediction, rounds=2, iterations=10,
+                                       joints=legs))
         for side in ("left", "right"):
-            arm = [skeleton.JOINT[f"{side}_{name}"] - 1 for name in ("collar", "shoulder", "elbow", "wrist")]
+            if limbs is not None and f"{side}_arm" not in limbs:
+                continue
+            arm = [skeleton.JOINT[name] - 1 for name in LIMB_JOINT_NAMES[f"{side}_arm"]]
             for start in ARM_STARTS:
                 body = best[2].copy()
                 for index, value in _arm_rotations(side, *start).items():
                     body[index] = value
                 attempt(self.fit_frame(frame, best[0], best[1], body, prediction, rounds=2, iterations=10,
-                                       coarse=False, joints=arm), side)
+                                       joints=arm), side)
         if improved:
             best = self.fit_frame(frame, best[0], best[1], best[2], prediction, rounds=2, coarse=False)
         return best
@@ -604,8 +760,10 @@ class Tracker:
                 restarted = True
                 explained = self.explain(result[0], result[1], result[2], frame)
             else:
-                # after a restart the last two poses do not give a velocity
-                last = slice(-1, None) if restarts[-1] else slice(None)
+                # after a restart the last two poses do not give a velocity; after a gap (frames
+                # dropped) neither: a limb in motion before it would be thrown on along its velocity
+                gap = c.gap_frames > 0 and frame.time - times[-1] > c.gap_frames * self.frame_period
+                last = slice(-1, None) if restarts[-1] or gap else slice(None)
                 prediction = self.predict(rotations[last], positions[last], bodies[last], times[last], frame.time)
                 result = self.fit_frame(frame, prediction[0], prediction[1], prediction[2], prediction)
                 explained = self.explain(result[0], result[1], result[2], frame)
@@ -618,9 +776,15 @@ class Tracker:
                     # compared on the points: the retry's energy has no continuity terms
                     if np.median(retried["distance"]) < residual:
                         result, restarted, explained = retry, True, retried
-            if 0 < c.recover_fraction < explained["unexplained"] and explained["unexplained_count"] >= 10:
+            misfit = 0 < c.recover_fraction < explained["unexplained"] and explained["unexplained_count"] >= 10
+            in_free_space = 0 < c.recover_free_space < explained["free"]
+            if misfit or in_free_space:
+                near = self.limbs_to_search(result[0], result[1], result[2], frame, explained)
+                limbs = (near - {"trunk"}) or None                     # nothing pinned down: every limb
+                trunk = in_free_space or "trunk" in near or explained["unexplained"] > 3 * c.recover_fraction
                 result = self.recover_limbs(frame, result, None if restarted else prediction,
-                                           None if restarted else (rotations[-1], positions[-1], bodies[-1]))
+                                           None if restarted else (rotations[-1], positions[-1], bodies[-1]),
+                                           limbs=limbs, trunk=trunk)
                 explained = self.explain(result[0], result[1], result[2], frame)
                 searched += 1
             rotation, position, body, energy, _ = result
@@ -799,7 +963,7 @@ class Tracker:
                                                           + s["front"][:, None] * step[match.front])
                         energy = energy + self.frame_energy(vertices[i], data[k], match, scale=scale, **moved)
                     energy = energy / count + c.limit_weight * limit_penalty(bb) / count
-                    energy = energy + c.twist_weight * (bb[:, TWIST_JOINTS, 1] ** 2).sum() / count
+                    energy = energy + neutral_priors(bb, c) / count
                     # smoothness of the joint motion (non-uniform frame times): accelerations at the inner
                     # frames, jerk between them; normalised by the scale (about |x| / scale when large)
                     j = joints[:, main]
@@ -934,7 +1098,7 @@ def flag_frames(quality: dict, contacts: np.ndarray, times: np.ndarray) -> dict:
     checks = {
         "residual": quality["residual_median"] > 0.03,
         "unexplained": quality["unexplained"] > 0.05,
-        "free_space": quality["silhouette_violation"] > 0.05,
+        "free_space": quality["silhouette_violation"] > 0.03,
         "below_floor": quality["floor"] < -0.02,
         "sliding": sliding > 0.3,
         "joint_limits": quality["limit_excess_deg"] > 10.0,

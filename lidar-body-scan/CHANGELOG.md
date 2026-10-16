@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.4.0: tracking without twisted trunks, heads and phantom limbs (2026-10-16)
+
+The review videos of the 27 s02 takes (tracked with 1.3.0 on the DEI
+cluster) showed bodies twisted out of shape when the person was side-on
+(s02_jump02: 12 to 22 % of the body seen from the LiDAR where the sensor
+measured nothing), heads and arms at odd angles, forearms at waist height
+not followed in running, and a leg thrown away after a 0.65 s data gap.
+Changes to `track` (all of them can be switched back with their options):
+
+- The frame fit runs 30 L-BFGS iterations per round instead of 12, which
+  stopped before convergence (`--iterations`).
+- Spine, neck and head keep adult ranges of motion (bodyscan.body.skeleton):
+  trunk twist about +-40 deg and side bend about +-45 deg in all (was up to
+  +-95 and +-80), head turn about +-80 deg (was +-130).
+- New weak priors towards neutral: neck and head (`--head-weight` 0.05),
+  forearm twist and wrists (`--forearm-twist-weight` 0.02).
+- Free space: the penalty adds a term at four times the silhouette scale, so
+  that a limb 20 to 50 cm out in empty space is still pulled back; its bound
+  is unchanged, so leaving the points never pays (`--free-space-loss wide`;
+  `bounded` is the old one). Columns lost with a UDP packet are unknown, no
+  longer empty space.
+- The search of a poorly fitted frame also runs when more than 3 % of the
+  visible body lies in free space (`--recover-free-space`), also tries the
+  trunk, neck and head untwisted and the body turned by +-35 deg
+  (`--torso-search`, `--yaw-search`), searches only the limbs near the misfit,
+  has four new arm starts (elbow bent with the forearm forward, running swing
+  forward and back, swing forward and up), moves the limbs coarse to fine,
+  and accepts a mostly hidden arm when it explains points or leaves empty
+  space.
+- After a gap of more than 2.5 frame periods the prediction keeps the last
+  pose (`--gap-frames`).
+- The `free_space` review flag fires at 3 % of the visible body (was 5 %).
+
+Synthetic takes with truth (test body, 2-core CPU, joint error MPJPE mean;
+1.3.0 then 1.4.0): jumps side-on with arm swings 35.8 then 27.8 mm (p90 76
+then 49 mm, head turned up to 82 then 10 deg), jumps facing the sensor 14.7
+then 11.6 mm (head 34 then 9 deg), walking towards the sensor with jogging arms
+27.7 then 19.8 mm, the same across the line of sight 26.3 then 24.1 mm, a
+walk across the line of sight 16.8 then 16.3 mm (trunk twist p95 16 then 8
+deg). The arm hidden behind the body stays a guess (hanging) in both.
+
 ## Tracking: progress of stage 2, precision option (2026-10-14)
 
 - The progress of the whole-sequence refinement counted correspondence rounds
