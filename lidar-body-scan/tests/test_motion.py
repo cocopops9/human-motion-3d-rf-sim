@@ -456,6 +456,26 @@ class TrackingTest(unittest.TestCase):
             folder.cleanup()
 
 
+@needs_torch
+class TrackingPenaltyTest(unittest.TestCase):
+    def test_free_space_penalties_are_bounded_and_the_wide_one_reaches_farther(self):
+        import torch
+        from bodyscan.dynamic.track import free_space_loss
+        scale = 0.06
+        distance = torch.linspace(0.0, 2.0, 401, dtype=torch.float64)
+        for kind in ("bounded", "wide"):
+            # bounded by scale^2: leaving the points for empty space never pays more than a miss
+            self.assertLessEqual(float(free_space_loss(distance, scale, kind).max()), scale ** 2 + 1e-12)
+        pull = {}
+        for kind in ("bounded", "wide"):
+            at = torch.tensor([4 * scale, 6 * scale], dtype=torch.float64, requires_grad=True)
+            free_space_loss(at, scale, kind).sum().backward()
+            pull[kind] = at.grad.numpy()
+        # a limb 24 or 36 cm out in empty space is still pulled back (2.4 and 3.8 times the bounded pull)
+        self.assertGreater(pull["wide"][0], 2.0 * pull["bounded"][0])
+        self.assertGreater(pull["wide"][1], 3.0 * pull["bounded"][1])
+
+
 if __name__ == "__main__":
     unittest.main()
 

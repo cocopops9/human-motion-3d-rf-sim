@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.4.1: the right facing from the first frame; results over three noise realisations (2026-10-17)
+
+- `track` chooses the facing of the first frame, and of a frame where the
+  person is lost, by fitting the body as a whole from the best start of each
+  distinct facing (`--init-facings` 4, more than 45 deg apart) and keeping
+  the fit that explains the points best. Before, the lowest energy of quick
+  fits of the root decided, and for a person seen side-on it hardly tells
+  front from back: with 1.4.0 one of three noise realisations of a synthetic
+  jog across the line of sight was tracked facing backwards for the whole
+  take (joint error 274 mm). 1.3.0 picked the right facing on that take by
+  about 10 % of the energy, so it could fail the same way. The whole fits
+  separate the two clearly (point score 6.5 mm against 18 mm). It costs a few
+  seconds per initialisation.
+- The help of `--gap-frames` no longer claims a limb search after a gap; a
+  test of the free-space penalties.
+- Tried and not kept: smoothing the jumps of joints the sensor does not see
+  more strongly in stage 2 (quadratic up to 11 times the scale), or treating
+  a part without nearby points as unseen. Both moved velocity error from the
+  far arm to the arm the sensor sees (side-on jumps: near hand and forearm
+  +0.2 m/s in every realisation).
+
+The synthetic numbers quoted for 1.4.0 were single runs. Another noise
+realisation of the same take changes the mean joint error by 13 to 34 %
+(the largest minus the smallest of three, over their mean), so the versions
+are compared on the same realisations. Over three realisations of each take
+(test body, 1024 x 20, default settings; mean over the three, then the mean
+paired difference with its range):
+
+| Motion | Joint error, 1.3.0 then 1.4.1 | Body-part velocity error | Neck and head angle, p95 | Also |
+|---|---|---|---|---|
+| walk across, 2.4 m | 18.5 then 18.1 mm (-0.4, range -0.5 to -0.3) | 0.123 then 0.106 m/s | 8.6 then 4.6 deg | trunk twist p95 16 then 8 deg; hidden joints +3 mm |
+| jumps facing the sensor, 2.3 m | 16.3 then 13.5 mm (-2.8, -3.1 to -2.6) | 0.184 then 0.138 m/s | 32 then 7.5 deg | legs 0.19 then 0.10 m/s |
+| jumps side-on, 2.3 m | 38.1 then 28.8 mm (-9.3, -11.0 to -8.0) | 0.78 then 0.81 m/s (+0.03, -0.02 to +0.05) | 77 then 8.8 deg | trunk 0.195 then 0.144 m/s; far hand and forearm 2.28 then 2.42 m/s |
+| jog across, 2.4 m | 28.1 then 25.9 mm (-2.2, -2.8 to -1.5) | 0.41 then 0.44 m/s (+0.03, -0.01 to +0.10) | 10.0 then 7.3 deg | legs 0.16 then 0.13 m/s; far hand and forearm 1.14 then 1.26 m/s; hidden joints +7 mm |
+| jog towards the sensor, 4 to 2 m | 29.0 then 21.5 mm (-7.5, -7.9 to -6.9) | 0.68 then 0.54 m/s | 7.5 then 4.3 deg | hidden joints 107 then 38 mm |
+
+The arm on the far side of the body, which the sensor does not see, stays a
+guess: its velocity error is about that of an arm held still against the
+trunk (hand 1.3 m/s in the jog across, 2.3 m/s in the side-on jumps), and in
+those two motions it decides the total velocity error. Tracking takes 7 to
+47 % longer than with 1.3.0 (single thread; most for the side-on jumps).
+
 ## 1.4.0: tracking without twisted trunks, heads and phantom limbs (2026-10-16)
 
 The review videos of the 27 s02 takes (tracked with 1.3.0 on the DEI

@@ -217,10 +217,19 @@ version 1.3 stopped at 12, before the fit converged: on synthetic jumps the
 joint error was about 14 mm instead of 11 mm, the head turned by up to 20 deg
 for nothing, and the unconverged frames needed limb searches.
 
-The first frame is fitted from 8 facing directions; a frame whose points lie
+The first frame is fitted from 8 facing directions (`--init-yaws`): a quick
+fit of the root from each, then the best start of each distinct facing (the
+`--init-facings` 4 with the lowest energies, more than 45 deg apart) is fitted
+as a whole, and the fit that explains the points best is kept. Before version
+1.4.1 the lowest energy of the quick fits decided, and for a person seen
+side-on it hardly tells front from back: a synthetic jog was tracked facing
+backwards for the whole take (joint error 27 cm), while the whole fits
+separate the two clearly (score of the search below: 6.5 mm facing the right
+way, 18 mm facing backwards, of which 9 mm for 6 % of the body in free
+space). A frame whose points lie
 more than `--lost-residual` (5 cm, median) from the body is fitted again from
-several directions. After a gap of more than `--gap-frames` (2.5) frame
-periods (frames dropped by the segmentation) the prediction keeps the last
+several directions in the same way. After a gap of more than `--gap-frames`
+(2.5) frame periods (frames dropped by the segmentation) the prediction keeps the last
 pose instead of extrapolating its velocity, which threw a moving leg away
 after a gap of 0.65 s. When more than `--recover-fraction` (2 %, and at
 least 10) of the points remain farther than `--recover-distance` (6 cm) from
@@ -424,6 +433,18 @@ the sensor hardly sees took the velocity error of the walk at 3.5 m from 0.36
 to 0.28 m/s (the far hand from 1.2 to 0.9 m/s), and the limb search fixed the
 landings (jump at 2 m, exact body: joint error from 21 to 12 mm, worst frame
 from 120 to 40 mm).
+
+The table above was measured with version 1.3. Version 1.4.1 against 1.3.0 on
+five synthetic motions with the exact body, each over three noise
+realisations (the table is in CHANGELOG.md): the joint error is lower in all
+five (by 0.4 mm in a walk up to 9 mm in side-on jumps); the body-part
+velocity error is lower by 14 to 25 % in a walk, in jumps facing the sensor
+and in a jog towards it, and unchanged within the spread in side-on jumps and
+in a jog across the line of sight, where the far arm decides it; neck and
+head stay within 9 deg (p95) instead of turning by up to 77 deg. One run is
+not enough to compare settings: another noise realisation of the same take
+changes the mean joint error by 13 to 34 %, so compare settings on the same
+realisations and over several of them.
 
 ## 7. Limits
 

@@ -736,13 +736,14 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--tracking-iterations` | `30` | L-BFGS iterations per round | 12 (version 1.3) stops before the fit converges: on synthetic jumps the joint error rose from about 11 to 14 mm, the head turned by up to 20 deg, and the unconverged frames needed limb searches |
 | `--coarse-scale` | `4.0` | robust scale of the first round, as a multiple of robust_scale (halved every round down to robust_scale) | larger: catches faster limbs, but stray points pull more in the first round |
 | `--init-yaws` | `8` | facing directions tried on the first frame and after the person is lost |  |
+| `--init-facings` | `4` | of the facings the init_yaws quick fits end in, the ones with the lowest energies (at most this many, more than 45 deg apart) are fitted as a whole and compared on the points | 1: the facing of the lowest quick-fit energy, as before version 1.4.1 (a person seen side-on can be tracked facing backwards) |
 | `--lost-residual` | `0.05` m | median point distance above which a frame is fitted again from several starts |  |
 | `--recover-distance` | `0.06` m | a point farther than this from the visible body is unexplained |  |
 | `--recover-fraction` | `0.02` | fraction of unexplained points above which the frame is fitted again from other starts: the previous pose, legs, arms (0: never) | smaller: more searches (about 5 s per frame on a CPU) |
 | `--recover-free-space` | `0.03` | fraction of the visible body lying where the sensor saw empty space above which the frame is also fitted again from other starts (0: never) | 0: a limb or a turned trunk placed in empty space is never searched again (version 1.3) |
 | `--torso-search` | `True` | the search of a poorly fitted frame also tries the trunk, neck and head untwisted, and the whole body turned by +-yaw_search |  |
 | `--yaw-search` | `35.0` deg | turn of the body tried by the trunk search |  |
-| `--gap-frames` | `2.5` | after more than this many frame periods without a tracked frame (frames dropped by the segmentation) the prediction keeps the last pose instead of extrapolating its velocity, and the limbs are searched again | large: a limb in motion before a gap is thrown on along its velocity |
+| `--gap-frames` | `2.5` | after more than this many frame periods without a tracked frame (frames dropped by the segmentation) the prediction keeps the last pose instead of extrapolating its velocity | large: a limb in motion before a gap is thrown on along its velocity |
 
 ### [refine]
 

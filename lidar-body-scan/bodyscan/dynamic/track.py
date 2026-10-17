@@ -126,6 +126,11 @@ class TrackConfig:
                                      "round down to robust_scale)",
                                 effect="larger: catches faster limbs, but stray points pull more in the first round")
     init_yaws: int = param(8, "facing directions tried on the first frame and after the person is lost")
+    init_facings: int = param(4, "of the facings the init_yaws quick fits end in, the ones with the lowest "
+                                 "energies (at most this many, more than 45 deg apart) are fitted as a whole "
+                                 "and compared on the points",
+                              effect="1: the facing of the lowest quick-fit energy, as before version 1.4.1 (a "
+                                     "person seen side-on can be tracked facing backwards)")
     lost_residual: float = param(0.05, "median point distance above which a frame is fitted again from several "
                                        "starts", unit="m")
     recover_distance: float = param(0.06, "a point farther than this from the visible body is unexplained", unit="m")
@@ -142,7 +147,7 @@ class TrackConfig:
     yaw_search: float = param(35.0, "turn of the body tried by the trunk search", unit="deg")
     gap_frames: float = param(2.5, "after more than this many frame periods without a tracked frame (frames "
                                    "dropped by the segmentation) the prediction keeps the last pose instead of "
-                                   "extrapolating its velocity, and the limbs are searched again",
+                                   "extrapolating its velocity",
                               effect="large: a limb in motion before a gap is thrown on along its velocity")
 
 
@@ -255,6 +260,9 @@ def free_space_loss(distance, scale: float, kind: str):
         return geman_mcclure(distance, scale)
     wide = 4.0 * scale
     return 0.6 * geman_mcclure(distance, scale) + 0.4 * (scale / wide) ** 2 * geman_mcclure(distance, wide)
+
+# Facings closer than this are one candidate of the initialisation (Tracker.initialise).
+INIT_FACING_GAP = np.radians(45.0)
 
 # Starting poses of both legs for the same search: (hip flexion, knee flexion,
 # ankle dorsiflexion) [deg]: standing, half squat, deep squat (a landing).
@@ -721,7 +729,12 @@ class Tracker:
         return best
 
     def initialise(self, frame: FrameData, body=None, yaws=None, position=None):
-        """Several facing directions from the start pose; keeps the best fit."""
+        """Several facing directions from the start pose: a quick fit of the root from each, then
+        the best start of every distinct facing (more than INIT_FACING_GAP apart, the init_facings
+        lowest energies) fitted as a whole; keeps the fit that explains the points best. The quick
+        fits' energies hardly tell front from back for a person seen side-on (a synthetic jog was
+        tracked facing backwards for the whole take); the whole fits do (point score about 6 mm
+        against 18 mm there)."""
         from bodyscan.body.rotations import rotation_z_np
         c = self.config.tracking
         body = self.start_body if body is None else body
@@ -731,14 +744,21 @@ class Tracker:
             center = center + 0.12 * away / max(np.linalg.norm(away), 1e-6)
             position = np.array([center[0], center[1], self.avatar.standing_height])
         yaws = np.linspace(0.0, 2 * np.pi, max(c.init_yaws, 1), endpoint=False) if yaws is None else yaws
-        best = None
-        for yaw in yaws:
-            result = self.fit_frame(frame, rotation_z_np(yaw), position, body, None, rounds=2, iterations=10,
-                                    free_body=False)
-            if best is None or result[3] < best[3]:
-                best = result
-        rotation, position, body, _, _ = best
-        return self.fit_frame(frame, rotation, position, body, None)
+        quick = sorted((self.fit_frame(frame, rotation_z_np(yaw), position, body, None, rounds=2, iterations=10,
+                                       free_body=False) for yaw in yaws), key=lambda result: result[3])
+        facings, starts = [], []
+        for result in quick:
+            facing = np.arctan2(result[0][1, 0], result[0][0, 0])
+            if all(abs(np.angle(np.exp(1j * (facing - other)))) > INIT_FACING_GAP for other in facings):
+                facings.append(facing)
+                starts.append(result)
+        best, best_score = None, np.inf
+        for rotation, start_position, start_body, _, _ in starts[:max(c.init_facings, 1)]:
+            fitted = self.fit_frame(frame, rotation, start_position, start_body, None)
+            score = self.explain(fitted[0], fitted[1], fitted[2], frame)["score"]
+            if score < best_score:
+                best, best_score = fitted, score
+        return best
 
     def track(self, start: int = 0, stop: int | None = None) -> dict:
         """Stage 1 over the segmented frames; returns arrays per frame."""
