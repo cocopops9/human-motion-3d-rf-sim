@@ -297,10 +297,11 @@ def free_space_loss(distance, scale: float, kind: str):
 # A limb counts as observed (keeps its tracked pose in complete_hidden_limbs) from this fraction of its
 # full view seen with points (coupling.limb_observation). A far leg seen side-on is mostly seen in part
 # (between the legs, below the near knee) and its tracked pose is better than the guess there (synthetic
-# side-on jumps: far foot 35 mm tracked, 52 mm guessed where a quarter to a half of it showed); a far arm
-# seen in part (a hand behind the near arm) is not (an arm moving unlike its partner: far wrist 51 mm with
-# the arm anchored from half seen, 87 mm from a quarter).
-OBSERVED_LIMB = {"arm": 0.5, "leg": 0.25}
+# side-on jumps: far foot 35 mm tracked, 52 mm guessed where a quarter to a half of it showed; a jog that
+# starts from standing, the far leg seen at 21 to 25 %: far ankle 16 mm anchored from a quarter, 12 mm
+# from a fifth); a far arm seen in part (a hand behind the near arm) is not (an arm moving unlike its
+# partner: far wrist 51 mm with the arm anchored from half seen, 87 mm from a quarter).
+OBSERVED_LIMB = {"arm": 0.5, "leg": 0.2}
 
 # Turn of a guessed limb into the shadow of the body (Tracker.shadow_turns): the cost of changing it
 # by 8 deg between two frames (in units of the fraction of the limb in the sensor's sight), and the
@@ -1114,7 +1115,11 @@ class Tracker:
 
     def start_hidden_limbs(self, result: dict, prepared: dict) -> int:
         """With coupling.start_from_guess, the hidden limbs start stage 2 from the guess of
-        complete_hidden_limbs (not turned into the shadow). Returns the number of limb-frames changed."""
+        complete_hidden_limbs (not turned into the shadow): a far arm left where stage 1 put it (still,
+        in the trunk, out to the side) disturbs the refinement of the rest of the body (synthetic side-on
+        jumps: velocity error of the near hand 0.24 m/s with the guessed start, 0.34 without; probably
+        through the joint smoothness, which ties the far arm to the trunk). Returns the number of
+        limb-frames changed."""
         if not self.config.coupling.start_from_guess:
             return 0
         changed = self.guess_hidden_limbs(result, prepared, turn=False)

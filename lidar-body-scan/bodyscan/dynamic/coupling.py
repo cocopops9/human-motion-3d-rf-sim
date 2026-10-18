@@ -67,11 +67,12 @@ class CouplingConfig:
                                "together) and its cycle are estimated", unit="s",
                           effect="longer: steadier estimate, slower to notice a change of activity")
     couple_legs: bool = param(True, "couple the legs as well (the far leg of a person seen side-on)")
-    start_from_guess: bool = param(False, "the hidden limbs also start stage 2 from their guess (the guess "
-                                          "replaces them after stage 2 in any case)",
-                                   effect="true: stage 2 starts the hidden limbs from the guess; on synthetic "
-                                          "takes this changed the result little where the guess was smooth, "
-                                          "and spread its errors to the rest of the body where it was not")
+    start_from_guess: bool = param(True, "the hidden limbs also start stage 2 from their guess (it replaces them "
+                                         "after stage 2 in any case): a far arm left where stage 1 put it "
+                                         "disturbs the refinement of the rest of the body",
+                                   effect="false: the hidden limbs start stage 2 where stage 1 left them (synthetic "
+                                          "side-on jumps: hand of the arm the sensor sees 0.24 m/s of velocity "
+                                          "error with the guessed start, 0.34 without)")
     shadow_turn: float = param(32.0, "largest turn of the guessed limb about the vertical tried, in steps of 8 "
                                      "deg, when the guess puts it where the sensor saw empty space or something "
                                      "else: the facing of a person seen side-on is uncertain by 5 to 10 deg, and "

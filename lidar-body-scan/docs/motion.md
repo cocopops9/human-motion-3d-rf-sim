@@ -327,8 +327,10 @@ partner's segments is mirrored, not their rotations relative to the trunk: a
 trunk tracked 10 deg twisted would otherwise put the far arm 20 deg off (the
 far wrist about 10 cm away in a first version). Where the limb does show (a
 hand appearing in front of the trunk, the far leg between the legs; half of
-the limb seen with points) it keeps its tracked pose, and the offset from the
-guess seen there is carried into the hidden frames: between two
+an arm or a fifth of a leg seen with points: the tracked pose of a leg seen
+in part was better than the guess, that of an arm was not) it keeps its
+tracked pose, and the offset from the guess seen there is carried into the
+hidden frames: between two
 observations up to 3 s apart it changes linearly from one to the other, so
 the limb meets both and in between moves like its partner (in a short gap
 that is almost the plain interpolation of the two observations; across a
@@ -355,8 +357,10 @@ The guess is applied after stage 2, not as a term of it. With no points on
 a limb, the energy of a window is dominated by the data of the rest of the
 body and the optimiser hardly moves the limb (on a synthetic side-on jump a
 target turned by 20 deg, or a ten times larger weight, changed the far
-wrist by 2 mm). The hidden limbs do start stage 2 from the guess, so that a
-far hand that appears in front of the trunk is near its points. The
+wrist by 2 mm). The hidden limbs do start stage 2 from the guess, not turned
+(`--start-from-guess`): a far arm left where stage 1 put it disturbed the
+refinement of the rest of the body (synthetic side-on jumps: velocity error
+of the near hand 0.34 m/s without, 0.24 m/s with). The
 free-space term of stage 1 and 2 now also covers the limb vertices that the
 body model hides behind itself (`--free-space-hidden`): what hides a limb
 from the sensor is told by the measured ranges, not by the model.
