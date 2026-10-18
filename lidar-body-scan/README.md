@@ -115,7 +115,7 @@ Version 1.2 animates the person. The turntable scan gives the person's body (the
 
 <p align="center"><sub>Synthetic data: the procedural test body walking 2 m from a simulated OS0-128 (1024 x 20), tracked by <code>bodyscan track</code>. Green dots are the LiDAR points of each frame, on the tracked body. Top: seen from the LiDAR. Bottom: the same instants from the far side, where the sensor saw almost nothing; that side follows from the body model and the motion rules, not from data.</sub></p>
 
-The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), joint limits, the floor, feet that do not slide and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
+The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), the limb is guessed from its partner on the other side, mirrored, at the same time in a jump or half a cycle later in a walk or a run, and joined to where the sensor did see it before and after (since version 1.5); joint limits, the floor, feet that do not slide, arms kept out of the trunk and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed and which were guessed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
 
 ---
 

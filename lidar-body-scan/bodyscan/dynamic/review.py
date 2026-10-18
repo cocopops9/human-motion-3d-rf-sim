@@ -4,7 +4,8 @@ Every rendered frame shows two views of the tracked body (shaded mesh), seen
 from the LiDAR and from the side, with the person's LiDAR points drawn over
 it, coloured by their distance to the body (green on the surface, yellow at
 2 cm, red at 5 cm and more). Points hidden behind the body in the view are
-not drawn. A strip at the top gives the time, the frame number and the
+not drawn. In the side view, a limb that the tracker completed from its
+partner on the other side (the sensor did not see it) is pale violet. A strip at the top gives the time, the frame number and the
 flags of the tracker (free space, sliding, ...).
 
 Output: review_XXXXX.png for the chosen frames (flagged ones first) and
@@ -24,6 +25,9 @@ from bodyscan.log import info, warning
 BACKGROUND = np.array([13, 21, 20], dtype=np.float32)
 DARK = np.array([22, 70, 66], dtype=np.float32)
 LIGHT = np.array([196, 245, 232], dtype=np.float32)
+# limbs guessed from their partner (the sensor did not see them): pale violet, in the side view only
+GUESS_DARK = np.array([48, 38, 78], dtype=np.float32)
+GUESS_LIGHT = np.array([214, 204, 242], dtype=np.float32)
 
 
 def _camera(direction_xy):
@@ -35,8 +39,9 @@ def _camera(direction_xy):
 
 
 def render(vertices, faces, points, residuals, center, direction_xy, half_width=0.9, half_height=1.05,
-           pixels=360) -> np.ndarray:
-    """(H, W, 3) uint8 orthographic view along direction_xy, centred on 'center'."""
+           pixels=360, tinted=None) -> np.ndarray:
+    """(H, W, 3) uint8 orthographic view along direction_xy, centred on 'center'. tinted: optional
+    boolean per vertex: the triangles of these vertices are drawn pale violet (guessed limbs)."""
     view, right, up = _camera(direction_xy)
     h = pixels
     w = int(round(pixels * half_width / half_height))
@@ -58,6 +63,11 @@ def render(vertices, faces, points, residuals, center, direction_xy, half_width=
     image[:] = BACKGROUND
     on_body = np.isfinite(depth)
     image[on_body] = DARK + (LIGHT - DARK) * shade[on_body, None]
+    if tinted is not None and np.any(tinted):
+        triangle = hit["primitive_ids"].numpy().reshape(h, w)
+        guessed_triangle = np.asarray(tinted)[np.asarray(faces)].all(axis=1)
+        guessed = on_body & guessed_triangle[np.clip(triangle, 0, len(guessed_triangle) - 1)]
+        image[guessed] = GUESS_DARK + (GUESS_LIGHT - GUESS_DARK) * shade[guessed, None]
     # the floor line
     floor_row = int(round((half_height - (0.0 - center[2])) / (2 * half_height) * (h - 1)))
     if 0 <= floor_row < h:
@@ -118,6 +128,16 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
     for k, path in enumerate(segmented.paths):
         by_index[int(path.stem.split("_")[-1])] = k
     sensor = segmented.sensor_position
+    # limbs completed from their partner (track, version 1.5): their vertices, and per frame how much
+    guessed = data["guessed"] if "guessed" in data.files else None
+    limb_vertices = []
+    if guessed is not None:
+        from bodyscan.body import skeleton
+        labels = skeleton.part_labels(shaped.weights.detach().cpu().numpy())
+        for limb in [str(n) for n in data["guessed_limbs"]]:
+            side, kind = limb.split("_")
+            parts = ("upper_arm", "forearm", "hand") if kind == "arm" else ("thigh", "shank", "foot")
+            limb_vertices.append(np.isin(labels, [skeleton.PART_NAMES.index(f"{side}_{p}") for p in parts]))
     chosen = list(range(0, len(motion), max(every, 1))) if frames is None else list(frames)
     flagged = [k for k in range(len(motion)) if flags[k]]
     written, gif_frames = [], []
@@ -130,15 +150,22 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
         residual = (closest_points(vertices, shaped.faces_np, points)[2] if len(points) else np.zeros(0))
         center = np.array([part.root_position[0, 0], part.root_position[0, 1], 1.0])
         toward = center[:2] - sensor[:2]
+        tinted = None
+        if guessed is not None:
+            tinted = np.zeros(len(vertices), dtype=bool)
+            for limb, members in enumerate(limb_vertices):
+                if guessed[k, limb] > 0.5:
+                    tinted |= members
         views = [render(vertices, shaped.faces_np, points, residual, center, toward, pixels=pixels),
                  render(vertices, shaped.faces_np, points, residual, center, np.array([-toward[1], toward[0]]),
-                        pixels=pixels)]
+                        pixels=pixels, tinted=tinted)]
         image = np.concatenate(views, axis=1)
         active = [names[b] for b in range(len(names)) if flags[k] >> b & 1]
         lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
                  f"left: from the LiDAR, right: from the side",
                  "flags: " + (", ".join(active) if active else "none") +
-                 (f"   points to body median {1000 * np.median(residual):.0f} mm" if len(residual) else "")]
+                 (f"   points to body median {1000 * np.median(residual):.0f} mm" if len(residual) else "")
+                 + ("   violet: guessed from the other side" if tinted is not None and tinted.any() else "")]
         image = _label(image, lines)
         if k in chosen:
             gif_frames.append(image)

@@ -211,6 +211,7 @@ points. The terms:
 | floor | no foot vertex below the floor |
 | continuity | joint rotations and root close to the prediction; weak for what the sensor sees, up to 11 times stronger for a body part seen less than 30 % (`--hidden-continuity`), so that a hidden limb keeps its motion instead of jumping wherever a few points pull it |
 | hidden arms | an arm seen less than 30 % is pulled slowly towards hanging (`--relax-hidden-arms`, 0 to switch off): an arm nobody sees is most likely hanging; tracking starts with the arms hanging, so that the scan's A-pose does not stay on an arm the sensor never sees |
+| trunk | no arm inside the trunk (since version 1.5, `--penetration-weight` 2): samples of the forearms, the hands and the lower halves of the upper arms deeper than `--penetration-margin` (2 cm: soft tissue, clothes, an avatar a little wider than the person) inside the trunk are pushed out. The depth of a sample is its largest distance to the tangent planes of its four nearest trunk samples (pelvis to chest, without the armpits), negative inside. Nothing else kept a hidden arm out of the body: the sensor cannot see inside it, so the points never objected |
 
 Each frame is fitted with `--iterations` (30) L-BFGS iterations per round;
 version 1.3 stopped at 12, before the fit converged: on synthetic jumps the
@@ -258,7 +259,25 @@ stay wrong for the rest of the take (an arm hidden behind the body, legs
 landing feet forward instead of knees forward), because nothing pulls it
 back.
 
-Stage 2 refines the whole sequence in windows of 40 frames overlapping by 10:
+The facing of the body is guarded since version 1.5. A person does not turn
+around between two frames, but a search or a fit from several directions on
+a frame whose points are hard to explain can: in the review of s02_jump02
+(version 1.4.1) the body turns by about 180 deg within 0.2 s at the first
+take-off and is tracked facing backwards, contorted, until the end. A result
+that turns the body faster than `--max-turn-rate` (240 deg/s, plus 40 deg)
+against any frame of the second before is refused, and the plain fit from
+the prediction is kept. The other way round, a body that does face the wrong
+way stays poorly explained: when a frame is still poorly explained after the
+searches five frames in a row (more than twice `--recover-fraction` of the
+points unexplained, or more than twice `--recover-free-space` of the visible
+body in free space), it is fitted afresh from the opposite facing and the two
+side-on ones (`--facing-check`, at most every ten frames), its limbs searched
+where points stay unexplained, and that fit is kept, turn or not, when it
+explains the points clearly better (score 3 mm lower).
+
+Stage 2 refines the whole sequence in windows of 40 frames overlapping by 10,
+each optimised together with the `--lookahead` 10 frames after it (refined
+again with the next window), so that the end of a window sees what follows:
 the same terms for every frame (coarse to fine again), plus
 
 | Term | What it asks |
@@ -266,6 +285,81 @@ the same terms for every frame (coarse to fine again), plus
 | smoothness | the accelerations of the joints change smoothly: a Charbonnier penalty on the jerk (weight `--smoothness-weight` 0.5; quadratic below `--smoothness-scale`, 200 m/s³, linear above), which removes frame-to-frame jitter and keeps sharp real events such as a landing; up to 11 times stronger for a body part seen less than 30 % (`--hidden-smoothness`). A penalty on the acceleration itself (`--smoothness acceleration`) would also pull a jump's flight, a free fall at 9.81 m/s², towards a straight line |
 | contact | a foot found standing (lowest vertex below 3.5 cm and ankle slower than 0.35 m/s in stage 1) does not slide |
 | rolling shutter | every point and every silhouette pixel is compared with the body at the time it was measured (the body is moved along its motion between the neighbouring frames) |
+
+After stage 2, the limbs the sensor does not see are completed from their
+partner on the other side (since version 1.5, below).
+
+#### Hidden limbs: the left-right coupling
+
+A person seen side-on shows the sensor one arm and mostly one leg. Until
+version 1.4 the far arm was held by continuity and smoothness and pulled
+slowly towards hanging: it kept still while the other one swung, drifted to
+the side, or sank into the trunk, which the sensor cannot see into. Since
+version 1.5 it is guessed from its partner (bodyscan.dynamic.coupling). Most
+activities move the two arms, and the two legs, in one of two ways:
+*alternating* (walking, running, running on the spot: each limb repeats its
+partner's motion, mirrored, half a cycle later; the pelvis rises and falls
+twice per cycle, once per step) or *together* (jumps, squats, both arms
+raised: each limb mirrors its partner at the same time; the pelvis rises and
+falls once per cycle). Which one, and the cycle, is estimated around every
+frame (`--coupling-window`, ±2 s) from what the sensor does see: the
+best-observed leg and arm repeat their cycle (the autocorrelation of their
+angles peaks at the cycle T, or, for a burst of three strides, the times
+between their peaks); the autocorrelation of the pelvis height at T/2 is then
+positive for alternating and negative for together; when both arms or both
+legs are observed, their correlation says it directly; a squat or a single
+jump (the pelvis drops while the hips flex) counts as together. Where none of
+this is clear (standing, gestures, a turn), no limb is coupled. The summary
+of `track` gives the share of frames of each kind. The plan changes smoothly:
+near the ends of a take the window is moved inwards rather than cut short,
+the cycle is held steady (a running median over a second), and the
+confidence fades out over 0.25 s before every change of mode and in after it.
+A first version let the plan switch between alternating and unknown from one
+frame to the next where a cut window missed the cycle, and the guessed hand
+jumped by 25 cm there (5 m/s in a synthetic walk).
+
+The guess for a hidden limb is its partner at the same time (together) or
+half a cycle before and after (alternating; the two blended by how well the
+partner was observed then, changing smoothly, also where the time half a
+cycle before enters the take), mirrored at the body's midplane in the frame
+of the facing direction. The world orientation of the
+partner's segments is mirrored, not their rotations relative to the trunk: a
+trunk tracked 10 deg twisted would otherwise put the far arm 20 deg off (the
+far wrist about 10 cm away in a first version). Where the limb does show (a
+hand appearing in front of the trunk, the far leg between the legs; half of
+the limb seen with points) it keeps its tracked pose, and the offset from the
+guess seen there is carried into the hidden frames: between two
+observations up to 3 s apart it changes linearly from one to the other, so
+the limb meets both and in between moves like its partner (in a short gap
+that is almost the plain interpolation of the two observations; across a
+long one the partner's swing); before the first observation, after the last
+and in longer gaps it fades with exp(-dt / `--offset-memory`, 0.4 s), so far
+from any observation the limb moves like its partner. A person whose two
+arms move differently (one swinging less) keeps that difference where the
+far arm was seen. The facing of a person seen side-on
+is uncertain by 5 to 10 deg (the points of the side of a trunk hardly tell:
+on the synthetic side-on jumps the tracked facing is 5 deg off in the median,
+and a pose turned to the true facing does not explain the points better),
+and the mirror doubles it, which puts the far hand 10 to 20 cm out of the
+shadow of the body. So the guess is turned about the vertical where needed:
+of 0, ±8, ±16 ... ±`--shadow-turn` (32 deg; legs half), the turn that puts
+the fewest of the limb's vertices where the sensor would have seen them
+(empty space beyond, or a measured surface behind), with an arm not inside
+the trunk and a small turn preferred. The turns of successive frames are
+chosen together, as the path of least cost with a cost for every change, and
+smoothed over 0.2 s: a hand 0.6 m from the shoulder moves 1 cm per degree of
+turn, and turns chosen frame by frame made it jitter. Where the plan is
+unsure the guess is blended in partly.
+
+The guess is applied after stage 2, not as a term of it. With no points on
+a limb, the energy of a window is dominated by the data of the rest of the
+body and the optimiser hardly moves the limb (on a synthetic side-on jump a
+target turned by 20 deg, or a ten times larger weight, changed the far
+wrist by 2 mm). The hidden limbs do start stage 2 from the guess, so that a
+far hand that appears in front of the trunk is near its points. The
+free-space term of stage 1 and 2 now also covers the limb vertices that the
+body model hides behind itself (`--free-space-hidden`): what hides a limb
+from the sensor is told by the measured ranges, not by the model.
 
 Output `<out>.npz`: for every tracked frame its time (sensor clock), the
 root, the body joint rotations (a PoseSequence: bodyscan.dynamic.motions),
@@ -280,10 +374,19 @@ farther points are clutter no limb can reach, reported as
 `clutter_fraction_mean` in the summary and never a reason to search the
 limbs again), `free_space` (more than 3 % of the
 visible vertices where the sensor saw through; 5 % before version 1.4, which
-let a whole arm in empty space pass unflagged), `below_floor` (a foot 2 cm
+let a whole arm in empty space pass unflagged; the hidden limb vertices that
+the fit also tests since version 1.5 do not count here, since the back of
+every limb along the edge of its silhouette falls a pixel outside it),
+`below_floor` (a foot 2 cm
 below the floor), `sliding` (a standing foot moving faster than 0.3 m/s),
 `joint_limits` (a limit exceeded by more than 10 deg), `acceleration` (a
-joint accelerating more than 120 m/s²).
+joint accelerating more than 120 m/s²), `arm_in_trunk` (an arm more than
+4 cm inside the trunk; the depth per frame is `arm_in_trunk` in the npz).
+The npz also holds the coupling of every frame (`coupling_mode`: 1
+together, -1 alternating, 0 none; `coupling_confidence`) and how much of
+each limb was guessed from its partner (`guessed`, 0 to 1, limbs in
+`guessed_limbs`); `review-motion` draws a limb guessed more than half pale
+violet in the side view.
 
 ### `review-motion`: human supervision
 
@@ -292,7 +395,9 @@ LiDAR points coloured by their distance to the body (green on the surface,
 yellow at 2 cm, red at 5 cm and more). `review.gif` shows every `--every`-th
 frame; every flagged frame gets a PNG. Look at the flagged frames first, then
 at the GIF for unnatural motion (a hidden arm that freezes or swings
-oddly). There is no automatic reference: this review is the check.
+oddly). In the side view a limb guessed from its partner (the sensor did not
+see it, version 1.5) is pale violet: its motion is inferred, not measured.
+There is no automatic reference: this review is the check.
 
 ### `export-motion`: meshes for Sionna RT
 
@@ -451,10 +556,16 @@ realisations and over several of them.
 **One sensor sees one side.** The body parts turned away from the LiDAR (the
 far arm while walking past it, the back while facing it) give no points. The
 tracker keeps them plausible (limits, the silhouette and free space, smooth
-accelerations), but their motion is not measured: the bench shows how much
-worse hidden joints are than seen ones. `<out>.npz` stores per frame and per
-body part the fraction that was observed, so that a radio study can tell
-measured from inferred motion. If the radar will stand next to the LiDAR, the
+accelerations, arms out of the trunk) and, since version 1.5, guesses a
+hidden arm or leg from its partner on the other side (section 4); but their
+motion is not measured. The guess assumes that the two sides move alike,
+mirrored, at the same time or half a cycle apart: right for walking, running
+and jumping; for a gesture of one arm the plan is unknown and the hidden arm
+is not coupled; a person who swings one arm less keeps the difference only
+where that arm was seen. The bench shows how much worse hidden joints are than
+seen ones. `<out>.npz` stores per frame and per body part the fraction that
+was observed, and per limb how much of it was guessed, so that a radio study
+can tell measured from inferred motion. If the radar will stand next to the LiDAR, the
 parts the LiDAR misses are mostly the parts the radar does not illuminate
 directly (moderate confidence: reflections from walls reach the far side).
 A second LiDAR on the other side would measure them.
