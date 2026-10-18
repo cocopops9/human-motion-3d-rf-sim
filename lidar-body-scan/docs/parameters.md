@@ -722,10 +722,11 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--silhouette-weight` | `2.0` | weight of the silhouette and free-space term | larger keeps hidden limbs out of the free space more firmly |
 | `--silhouette-scale` | `0.06` m | robust scale of the silhouette distances |  |
 | `--free-space-loss` | `wide` | how the free-space terms grow with the distance of a vertex from where the sensor allows it: wide (a robust term at the scale plus one at 4 times the scale: a limb 20 to 50 cm out in empty space is still pulled back) or bounded (the robust term alone: the pull fades beyond about two scales; version 1.3). Both are bounded, so that leaving the points altogether never pays | bounded lets a limb the sensor sees as empty space stay there (arms stretched into the air, a twisted trunk) |
+| `--free-space-hidden` | `True` | the free-space test also covers the limb vertices the body model hides behind itself: a hidden limb placed where the sensor saw empty space (out of the shadow of the trunk) is pulled back like a visible one; the measured ranges tell what really hid it | false: only vertices the model shows the sensor are tested (version 1.4) |
 | `--free-space-margin` | `0.06` m | a vertex counts as in free space when the sensor saw this much beyond it |  |
 | `--limit-weight` | `5.0` | weight of the anatomical joint limits |  |
 | `--twist-weight` | `0.05` | weight pulling the twist of the spine and the rotation of the hips about the legs towards zero [per rad^2]: the pelvis can turn and the trunk and legs turn back by as much, which the points hardly tell apart |  |
-| `--head-weight` | `0.05` | weight pulling the neck and head rotations towards upright and facing forward [per rad^2]: the head is round, its points hardly tell how it is turned or tilted | 0: the head turns and tilts freely (the weird head angles of version 1.3) |
+| `--head-weight` | `0.15` | weight pulling the neck and head rotations towards upright and facing forward [per rad^2]: the head is round, its points hardly tell how it is turned or tilted | 0: the head turns and tilts freely (the weird head angles of version 1.3); 0.05 (version 1.4): heads of people seen side-on still turned towards the sensor by 30 to 40 deg at times |
 | `--forearm-twist-weight` | `0.02` | weight pulling the twist of the forearms (about their long axis) and the wrist rotations towards rest [per rad^2]: the points of a forearm and of a relaxed hand hardly show them |  |
 | `--floor-weight` | `5.0` | weight of the no-foot-below-the-floor term |  |
 | `--pose-continuity` | `0.05` | weight of the joint rotations staying near the prediction (constant velocity) [per rad^2] | larger: steadier hidden limbs, slower to follow fast motion |
@@ -744,6 +745,10 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--torso-search` | `True` | the search of a poorly fitted frame also tries the trunk, neck and head untwisted, and the whole body turned by +-yaw_search |  |
 | `--yaw-search` | `35.0` deg | turn of the body tried by the trunk search |  |
 | `--gap-frames` | `2.5` | after more than this many frame periods without a tracked frame (frames dropped by the segmentation) the prediction keeps the last pose instead of extrapolating its velocity | large: a limb in motion before a gap is thrown on along its velocity |
+| `--max-turn-rate` | `240.0` deg/s | fastest turn of the whole body believed: a fit or a search that turns the body faster than this (plus 40 deg) against any frame of the last second is refused, and the plain fit from the prediction is kept (0: no limit) | 0: a frame whose points are hard to explain can turn the body around (in the review of s02_jump02, version 1.4.1, the body turns by about 180 deg within 0.2 s at the first take-off and stays so) |
+| `--facing-check` | `True` | a frame still poorly explained after the searches, five frames in a row, is fitted again from the opposite facing and from the two side-on ones (at most every ten frames); a fit that explains the points clearly better (3 mm) is kept, even if it turns the body around | false: a body tracked facing the wrong way stays so |
+| `--penetration-weight` | `2.0` | weight keeping the arms out of the trunk: a vertex of a forearm, a hand or the lower half of an upper arm deeper than penetration_margin inside the trunk is pushed out (stage 1 and 2) | 0: an arm the sensor does not see can sink into the trunk (version 1.4) |
+| `--penetration-margin` | `0.02` m | depth of an arm inside the trunk that is not penalised (soft tissue, clothes, an avatar slightly wider than the person) |  |
 
 ### [refine]
 
@@ -751,9 +756,10 @@ Whole-sequence refinement (stage 2): natural motion.
 
 | Option | Default | Meaning | Effect of changing it |
 |---|---|---|---|
-| `--enabled` | `True` | refine the whole sequence after the frame-by-frame fit |  |
-| `--window` | `40` | frames optimised together |  |
+| `--refine-enabled` | `True` | refine the whole sequence after the frame-by-frame fit |  |
+| `--refine-window` | `40` | frames optimised together |  |
 | `--overlap` | `10` | frames shared with the previous window (held, for continuity) |  |
+| `--lookahead` | `10` | frames after each window optimised with it and refined again with the next window: the last frames of a window see what comes after them | 0: the end of each window is refined without the frames that follow (version 1.4); larger: slower |
 | `--refine-rounds` | `2` | correspondence rounds per window |  |
 | `--refine-iterations` | `40` | L-BFGS iterations per round |  |
 | `--smoothness` | `jerk` | what the smoothness term penalises: the jerk (change of acceleration) or the acceleration of the joints | acceleration also pulls a jump's flight (free fall, 9.81 m/s2) flatter |
@@ -764,6 +770,19 @@ Whole-sequence refinement (stage 2): natural motion.
 | `--contact-speed` | `0.35` m/s | ... and its ankle moves slower than this |  |
 | `--skating-weight` | `2.0` | weight of the no-sliding of feet on the floor |  |
 | `--rolling-shutter` | `True` | compare every point with the body at the time it was measured |  |
+
+### [coupling]
+
+Hidden limbs guessed from their partner on the other side (after stage 2).
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--coupling-enabled` | `True` | guess a limb the sensor does not see from its partner on the other side, mirrored, at the same time (jumps) or half a cycle later (walking, running) | false: a hidden limb keeps still or drifts (version 1.4) |
+| `--offset-memory` | `0.4` s | how long an offset from the partner's motion, seen while the limb showed, carries on after it disappears | longer: the hidden limb keeps its observed pose longer before it follows its partner |
+| `--coupling-window` | `2.0` s | half-width of the time window in which the kind of motion (alternating or together) and its cycle are estimated | longer: steadier estimate, slower to notice a change of activity |
+| `--couple-legs` | `True` | couple the legs as well (the far leg of a person seen side-on) |  |
+| `--start-from-guess` | `True` | the hidden limbs also start stage 2 from their guess (it replaces them after stage 2 in any case): a far arm left where stage 1 put it disturbs the refinement of the rest of the body | false: the hidden limbs start stage 2 where stage 1 left them (synthetic side-on jumps: hand of the arm the sensor sees 0.24 m/s of velocity error with the guessed start, 0.34 without) |
+| `--shadow-turn` | `32.0` deg | largest turn of the guessed limb about the vertical tried, in steps of 8 deg, when the guess puts it where the sensor saw empty space or something else: the facing of a person seen side-on is uncertain by 5 to 10 deg, and mirroring at a midplane turned by that much turns the guess by twice as much; the smallest turn that brings the limb back into the shadow of the body is kept (0: never turned) | 0: the far arm of a person seen side-on often sticks out of the body's shadow by 10 to 20 cm (synthetic side-on jumps) |
 
 ## bodyscan export-motion
 
