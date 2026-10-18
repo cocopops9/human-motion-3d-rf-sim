@@ -1,5 +1,107 @@
 # Changelog
 
+## 1.5.0: hidden limbs guessed from their partner; arms out of the trunk; the facing guarded (2026-10-18)
+
+The review videos of the 27 s02 takes tracked with 1.4.1 were good while the
+person faced the sensor and poor while the person was side-on: the far arm,
+which the sensor does not see, kept still while the other one swung, took
+arbitrary poses or sank into the trunk; heads turned towards the sensor; in
+s02_jump02 the body turned around at the first take-off and stayed so.
+Changes to `track` (each can be switched back with its option):
+
+- Hidden limbs are guessed from their partner (new module
+  bodyscan.dynamic.coupling, `[coupling]` options). Around every frame the
+  kind of motion is estimated from what the sensor sees (the observed arm and
+  leg, the height of the pelvis): alternating (walking, running: the partner
+  half a cycle later) or together (jumps, squats: at the same time), or
+  unknown (no coupling). After stage 2 a limb the sensor does not see takes
+  its partner's motion, mirrored at the body's midplane in the frame of the
+  facing direction (the world orientations of the segments, not their
+  rotations relative to the trunk, which doubled a trunk twist). Where the
+  limb shows (half of an arm, a fifth of a leg seen with points) it keeps
+  its tracked pose, and the offset from the guess seen there is carried into
+  the hidden frames: linearly between two observations up to 3 s apart, so
+  the limb meets both, fading over `--offset-memory` (0.4 s) elsewhere. The
+  guess is turned about the vertical (0 to +-32 deg, `--shadow-turn`) where
+  it would lie in the sensor's sight or in the trunk: the facing of a person
+  seen side-on is uncertain by 5 to 10 deg and the mirror doubles it. The
+  plan, the weights and the turns change smoothly in time. The hidden limbs
+  also start stage 2 from the guess (`--start-from-guess`).
+- In stage 2 the free-space test also covers the limb vertices that the
+  model hides behind itself (`--free-space-hidden`): the measured ranges, not
+  the model, tell what hides a limb.
+- Arms are kept out of the trunk in stage 1 and 2 (`--penetration-weight` 2,
+  `--penetration-margin` 2 cm); new review flag `arm_in_trunk` (deeper than
+  4 cm) and its depth per frame in the npz.
+- The facing is guarded: a fit or a search that turns the body faster than
+  `--max-turn-rate` (240 deg/s, plus 40 deg) against the second before is
+  refused; a frame poorly explained five frames in a row is fitted again from
+  the opposite and the side-on facings and the better fit is kept
+  (`--facing-check`).
+- Stage 2 optimises each window with the 10 frames after it (`--lookahead`).
+- `--head-weight` 0.05 to 0.15: heads of people seen side-on turned towards
+  the sensor by 30 to 40 deg at times.
+- `review-motion` draws guessed limbs pale violet in the side view; the npz
+  holds `coupling_mode`, `coupling_confidence`, `guessed` and `guessed_limbs`.
+- The `free_space` flag counts the visible vertices only, as before.
+- The options `--enabled` and `--window` of the refinement are now
+  `--refine-enabled` and `--refine-window` (the coupling has options of the
+  same names).
+
+On the synthetic bench (test body, 1024 x 20, default settings), stage 2 and
+the completion against stage 2 of 1.4.1 on the same stage 1 (paired; mean
+over three noise realisations, then the mean paired difference and its
+range):
+
+| Motion | Joint error | Body-part velocity error | Far wrist | Far hand velocity | Near hand velocity | Legs velocity |
+|---|---|---|---|---|---|---|
+| jumps side-on, 2.3 m | 28.8 then 22.7 mm (-6.1, -6.8 to -5.1) | 0.81 then 0.33 m/s (-0.48, -0.53 to -0.40) | 170 then 87 mm | 2.92 then 1.08 m/s | 0.33 then 0.24 m/s | 0.19 then 0.16 m/s |
+| jog across, 2.4 m | 25.9 then 20.4 mm (-5.5, -6.6 to -4.8) | 0.44 then 0.31 m/s (-0.13, -0.19 to -0.04) | 215 then 134 mm | 1.56 then 1.12 m/s | 0.28 then 0.25 m/s | 0.13 then 0.13 m/s |
+| walk across, 2.4 m | 18.1 then 13.8 mm (-4.3, -4.8 to -3.5) | 0.106 then 0.106 m/s (0.000, -0.003 to +0.003) | 93 then 34 mm | 0.26 then 0.25 m/s | 0.134 then 0.128 m/s | 0.094 then 0.094 m/s |
+
+The synthetic people move their two sides alike, which favours the
+coupling. With one arm swinging 30 % less than the other, 0.06 s later and
+its elbow bent 15 deg more (one realisation each): side-on jumps 19.9 then
+18.1 mm, 0.221 then 0.207 m/s, far wrist 75 then 54 mm; jog 23.0 then
+19.9 mm, 0.37 then 0.31 m/s; walk 14.5 then 11.4 mm, 0.097 then 0.094 m/s,
+far wrist 82 then 39 mm. Worse: the velocity of the far forearm in walks
+(0.147 then 0.169 m/s; asymmetric walk 0.107 then 0.120), where the 1.4.1
+far arm, partly seen, already followed the swing. Stage 2 and the
+completion take 1.3 to 1.5 times as long as the stage 2 of 1.4.1 (single
+thread).
+
+END-TO-END
+
+Tried and not kept:
+- the coupling as a term of stage 2: with no points on a limb the optimiser
+  hardly moves it (a target turned by 20 deg, or a ten times larger weight,
+  changed the far wrist by 2 mm);
+- mirroring the rotations relative to the trunk: a trunk tracked 10 deg
+  twisted put the far wrist about 10 cm off;
+- blending the guess by the time to the nearest observation: an arm that
+  moves less than its partner (synthetic asymmetric take) got its far hand
+  velocity error from 0.51 to 1.22 m/s;
+- arms anchored from a quarter seen: far wrist 51 to 87 mm on that take;
+- the free-space test of hidden limb vertices in stage 1 too: the backs of
+  the limbs along the edges of their silhouette, a pixel outside it, made the
+  limb searches noisy (side-on jumps: 86 searches instead of 52, velocity
+  error of the legs 0.38 instead of 0.28 m/s after stage 1);
+- a plan estimated window by window without smoothing: where a window cut by
+  the end of a take missed the cycle, the plan switched between alternating
+  and unknown from one frame to the next and the guessed hand jumped by 25 cm
+  (walk: body-part velocity error 0.10 to 0.24 m/s); likewise a guess that
+  switched from the partner half a cycle later to the mean of before and
+  after where the time half a cycle before entered the take (jog: the far
+  hand jumped by 30 cm; velocity error of the take 0.43 against 0.33 m/s
+  once smooth).
+
+Not validated yet: everything on real recordings (re-run the s02 takes); the
+turn guard on a real flip (the synthetic turn-and-jumps take did not flip
+with 1.4.1 either); the head weight on real heads. The synthetic people
+move their two sides symmetrically, which favours the coupling; the
+asymmetric takes (one arm swinging less, later and more bent) check the
+other case.
+
 ## 1.4.1: the right facing from the first frame; results over three noise realisations (2026-10-17)
 
 - `track` chooses the facing of the first frame, and of a frame where the
