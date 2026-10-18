@@ -457,6 +457,324 @@ class TrackingTest(unittest.TestCase):
 
 
 @needs_torch
+@slow
+class HiddenLimbTest(unittest.TestCase):
+    def test_the_far_arm_of_side_on_jumps_moves_like_its_partner(self):
+        # seen side-on, the far arm is behind the trunk or the near arm; tracked alone it keeps still
+        # or drifts, completed from the near arm (jumps: together, mirrored) it swings with it
+        import torch
+        from bodyscan.body.testbody import cached
+        from bodyscan.dynamic import coupling, motions
+        from bodyscan.dynamic.avatar import Avatar
+        from bodyscan.dynamic.bench import SimulateMotionConfig, make_take
+        from bodyscan.dynamic.segment import MotionSegmenter, SegmentedRecording
+        from bodyscan.dynamic.simulate import load_truth, to_sensor_floor_frame
+        from bodyscan.dynamic.track import Tracker, TrackPipelineConfig
+        from bodyscan.io import NpzRecording
+        folder = TemporaryFolder()
+        try:
+            model = load_test_body()
+            shaped = model.shaped()
+            # heading 90 deg: the left side towards the sensor (180 deg would face it, both arms in view)
+            motion = motions.jump(shaped, count=2, height=0.3, heading_deg=90.0, stand_before=1.6, pause=0.6,
+                                  stand_after=0.6)
+            motion.save(folder.path / "motion.npz")
+            config = SimulateMotionConfig()
+            config.scenario.motion, config.scenario.distance = str(folder.path / "motion.npz"), 2.3
+            config.scenario.scan = False
+            take = make_take(folder.path / "take", cached(), config, quiet=True)
+            MotionSegmenter(NpzRecording(take)).run(folder.path / "segments")
+            avatar = Avatar.load(take / "truth_avatar.npz")
+            tracker = Tracker(avatar, avatar.model(cached(), "cpu", torch.float64),
+                              SegmentedRecording(folder.path / "segments"), TrackPipelineConfig())
+            result = tracker.track(30, None)
+            prepared = tracker.plan_coupling(result)
+            self.assertGreater(np.mean(prepared["plan"].mode == coupling.TOGETHER), 0.7)
+            alone = dict(result)                      # the far arm as the frame-by-frame fit leaves it
+            alone["body"] = result["body"].copy()
+            tracker.start_hidden_limbs(result, prepared)
+            refined = tracker.refine(result, tracker.contacts(result))
+            completed_result = dict(refined)
+            completed = tracker.complete_hidden_limbs(completed_result, prepared)
+            body = avatar.shaped(model, 0)
+            truth, meta = load_truth(take)
+            seen = coupling.limb_observation(result["observed"])
+            far = "left" if seen["left_arm"].mean() < seen["right_arm"].mean() else "right"
+            self.assertIn(f"{far}_arm", completed)
+            errors = {}
+            for name, source in (("alone", alone), ("completed", completed_result)):
+                estimate = motions.PoseSequence(result["times"], source["root_rotation"], source["root_position"],
+                                                source["body"])
+                _, joints = estimate.posed(body)
+                _, true_joints = truth.sample(result["times"]).posed(body)
+                true_joints = to_sensor_floor_frame(true_joints.reshape(-1, 3), meta["sensor_pose"]).reshape(
+                    true_joints.shape)
+                wrist = J[f"{far}_wrist"]
+                errors[name] = float(np.linalg.norm(joints[:, wrist] - true_joints[:, wrist], axis=1).mean())
+            self.assertLess(errors["completed"], 0.75 * errors["alone"], errors)
+            self.assertLess(errors["completed"], 0.12, errors)
+        finally:
+            folder.cleanup()
+
+
+class CouplingTest(unittest.TestCase):
+    """Left-right coupling of hidden limbs (bodyscan.dynamic.coupling), numpy only."""
+
+    STEP = 0.05
+
+    def plan(self, legs, arms, z, observation):
+        from bodyscan.dynamic import coupling
+        times = np.arange(len(z)) * self.STEP
+        signals = {"legs": np.stack(legs, axis=1), "arms": np.stack(arms, axis=1), "pelvis_z": z}
+        return coupling.estimate(times, signals, observation, step=self.STEP)
+
+    @staticmethod
+    def observation(n, left_arm=1.0, right_arm=1.0, left_leg=1.0, right_leg=1.0):
+        return {"left_arm": np.full(n, left_arm), "right_arm": np.full(n, right_arm),
+                "left_leg": np.full(n, left_leg), "right_leg": np.full(n, right_leg)}
+
+    def test_mirror_maps_a_left_limb_pose_onto_the_same_right_limb_pose(self):
+        from bodyscan.dynamic import coupling, motions
+        a = motions.Angles(1)
+        for side in ("left", "right"):
+            for name, value in (("elevation", 25.0), ("swing", 40.0), ("twist", 30.0), ("elbow", 70.0),
+                                ("hip", 35.0), ("knee", 60.0), ("ankle", 10.0), ("abduction", 8.0)):
+                getattr(a, f"{side}_{name}")[:] = value
+        body = motions.angles_to_body(a)[0]
+        for limb in ("left_arm", "left_leg"):
+            left = body[coupling.body_indices(limb)]
+            right = body[coupling.body_indices(coupling.PARTNER[limb])]
+            self.assertTrue(np.allclose(coupling.mirror(left), right, atol=1e-9), limb)
+
+    def test_plan_tells_an_alternating_gait_from_jumps_together(self):
+        from bodyscan.dynamic import coupling
+        rng = np.random.default_rng(1)
+        t = np.arange(0.0, 8.0, self.STEP)
+        cycle = 0.9
+        phase = 2 * np.pi * t / cycle
+        # running seen side-on: the right arm and most of the right leg hidden; the pelvis bobs once per step
+        legs = [0.4 * np.sin(phase), -0.4 * np.sin(phase)]
+        arms = [-0.5 * np.sin(phase), 0.5 * np.sin(phase)]
+        z = 0.95 + 0.03 * np.cos(2 * phase) + 0.001 * rng.normal(size=len(t))
+        plan = self.plan(legs, arms, z, self.observation(len(t), right_arm=0.0, right_leg=0.3))
+        middle = slice(len(t) // 4, 3 * len(t) // 4)
+        self.assertGreater(np.mean(plan.mode[middle] == coupling.ALTERNATING), 0.95)
+        self.assertLess(abs(np.median(plan.cycle[middle]) - cycle), 0.05)
+        self.assertTrue(np.allclose(plan.shift[middle], 0.5 * plan.cycle[middle]))
+        # jumps one after the other: hips flex as the pelvis drops, both arms swing together
+        cycle = 1.3
+        phase = 2 * np.pi * t / cycle
+        z = 0.95 + 0.15 * np.sin(phase)
+        hip = 0.6 * (1 - np.sin(phase)) / 2
+        arm = 1.2 * np.sin(phase + 0.3)
+        plan = self.plan([hip, hip], [arm, arm], z, self.observation(len(t), right_arm=0.0, right_leg=0.2))
+        self.assertGreater(np.mean(plan.mode[middle] == coupling.TOGETHER), 0.95)
+        self.assertTrue(np.all(plan.shift[middle] == 0.0))
+        # standing: nothing to tell
+        still = [0.01 * rng.normal(size=len(t)) for _ in range(2)]
+        plan = self.plan(still, still, 0.95 + 0.001 * rng.normal(size=len(t)), self.observation(len(t), right_arm=0.0))
+        self.assertTrue(np.all(plan.mode == coupling.UNKNOWN))
+        self.assertTrue(np.all(plan.confidence == 0.0))
+
+    def test_plan_holds_to_the_end_of_a_take_and_fades_at_a_change_of_mode(self):
+        from bodyscan.dynamic import coupling
+        rng = np.random.default_rng(2)
+        # a take of 5.4 s that stands, walks from 0.8 to 3.8 s (a cycle of 1.1 s) and stands again (as the
+        # synthetic walk of the bench): a window cut short by the end of the take missed the cycle, and
+        # the plan switched from alternating to unknown, with the confidence from 1 to 0, between two frames
+        t = np.arange(0.0, 5.4, self.STEP)
+        envelope = np.clip(np.minimum((t - 0.8) / 0.6, (3.8 - t) / 0.6), 0.0, 1.0)
+        phase = 2 * np.pi * np.cumsum(envelope) * self.STEP / 1.1
+        legs = [0.35 * envelope * np.sin(phase) + 0.02 * rng.normal(size=len(t)),
+                -0.35 * envelope * np.sin(phase) + 0.02 * rng.normal(size=len(t))]
+        arms = [-0.3 * envelope * np.sin(phase) + 0.02 * rng.normal(size=len(t)),
+                0.3 * envelope * np.sin(phase) + 0.02 * rng.normal(size=len(t))]
+        z = 0.95 + 0.02 * envelope * np.cos(2 * phase) + 0.002 * rng.normal(size=len(t))
+        plan = self.plan(legs, arms, z, self.observation(len(t), right_arm=0.0, right_leg=0.3))
+        self.assertGreater(np.mean(plan.mode == coupling.ALTERNATING), 0.9)
+        self.assertLess(np.abs(np.diff(plan.confidence)).max(), 1.5 * self.STEP / coupling.FADE)
+        alternating = plan.mode == coupling.ALTERNATING
+        self.assertLess(np.abs(np.diff(plan.cycle[alternating])).max(), 0.02)     # the cycle changes slowly
+        # running, then jumping: the confidence fades out before the change and in after it
+        t = np.arange(0.0, 10.0, self.STEP)
+        run = t < 5.0
+        phase = 2 * np.pi * t / np.where(run, 0.9, 1.3)
+        legs = [np.where(run, 0.4 * np.sin(phase), 0.3 * (1 - np.sin(phase))), np.where(run, -0.4 * np.sin(phase),
+                                                                                       0.3 * (1 - np.sin(phase)))]
+        arms = [np.where(run, -0.5 * np.sin(phase), 1.2 * np.sin(phase + 0.3)),
+                np.where(run, 0.5 * np.sin(phase), 1.2 * np.sin(phase + 0.3))]
+        z = 0.95 + np.where(run, 0.03 * np.cos(2 * phase), 0.15 * np.sin(phase)) + 0.001 * rng.normal(size=len(t))
+        plan = self.plan(legs, arms, z, self.observation(len(t), right_arm=0.0, right_leg=0.3))
+        self.assertIn(coupling.ALTERNATING, plan.mode[:80])
+        self.assertIn(coupling.TOGETHER, plan.mode[120:])
+        # never more than a frame period over FADE (plus the smoothing) between two frames
+        self.assertLess(np.abs(np.diff(plan.confidence)).max(), 1.5 * self.STEP / coupling.FADE)
+        changes = np.flatnonzero(plan.mode[1:] != plan.mode[:-1])
+        for k in changes:
+            self.assertLess(max(plan.confidence[k], plan.confidence[k + 1]), 0.05)
+
+    def test_target_is_the_mirrored_partner_half_a_cycle_away(self):
+        from bodyscan.dynamic import coupling
+        t = np.arange(0.0, 4.0, self.STEP)
+        cycle = 1.0
+        body = np.zeros((len(t), 21, 3))
+        left = coupling.body_indices("left_arm")
+        body[:, left[1], 1] = 0.5 * np.sin(2 * np.pi * t / cycle)               # left shoulder swings
+        body[:, left[1], 2] = -1.2                                              # left arm down
+        plan = coupling.CouplingPlan(np.full(len(t), coupling.ALTERNATING), np.ones(len(t)), np.full(len(t), cycle),
+                                     np.full(len(t), 0.5 * cycle))
+        root = np.repeat(np.eye(3)[None], len(t), axis=0)
+        targets = coupling.partner_targets(t, root, body, plan, self.observation(len(t), right_arm=0.0), ("right_arm",))
+        target, weight = targets["right_arm"]
+        inner = slice(20, 60)
+        expected = coupling.mirror(body[:, left[1]])
+        expected[:, 1] *= -1.0                                  # half a cycle away: the swing reversed
+        self.assertTrue(np.allclose(target[inner, 1], expected[inner], atol=1e-6))
+        self.assertTrue(np.allclose(weight[inner], 1.0))
+
+    def test_guess_does_not_jump_where_half_a_cycle_before_enters_the_take(self):
+        from bodyscan.dynamic import coupling
+        # the partner raises its arm, holds it and then swings: half a cycle after the start of the take
+        # the guess gets its partner half a cycle before as well as after, and used to switch from the one
+        # to the mean of the two between two frames (here 0.3 rad of the shoulder)
+        t = np.arange(0.0, 4.0, self.STEP)
+        body = np.zeros((len(t), 21, 3))
+        left = coupling.body_indices("left_arm")
+        body[:, left[1], 1] = np.where(t < 1.5, 0.6 * np.clip((t - 0.2) / 0.25, 0.0, 1.0),
+                                       0.6 * np.cos(2 * np.pi * (t - 1.5)))
+        body[:, left[1], 2] = -1.2
+        plan = coupling.CouplingPlan(np.full(len(t), coupling.ALTERNATING), np.ones(len(t)), np.ones(len(t)),
+                                     np.full(len(t), 0.5))
+        root = np.repeat(np.eye(3)[None], len(t), axis=0)
+        guess = coupling.limb_guesses(t, root, body, plan, self.observation(len(t), right_arm=0.0), ("right_arm",))
+        shoulder = guess["right_arm"].local()[:, 1]
+        steps = np.linalg.norm(np.diff(shoulder, axis=0), axis=1)
+        self.assertLess(steps[:20].max(), 0.1)
+        from bodyscan.body.rotations import matrix_to_axis_angle_np
+        from bodyscan.dynamic import coupling, motions
+        a = motions.Angles(2)
+        a.left_swing[:], a.left_elevation[:], a.left_elbow[:], a.left_twist[:] = 40.0, 20.0, 60.0, 30.0
+        body = motions.angles_to_body(a)
+        body[:, J["spine3"] - 1, 1] = np.radians(12.0)                     # the chest turned by 12 deg
+        root = np.repeat(np.eye(3)[None], 2, axis=0)
+        g = coupling.global_rotations(root, body)
+        # the right arm placed as the left one seen in the mirror of the midplane (facing frame)
+        parent = g["spine3"]
+        for name in coupling.LIMB_JOINTS["right_arm"]:
+            mirrored = coupling.MIRROR_UPRIGHT @ g[name.replace("right", "left")] @ coupling.MIRROR_MODEL
+            body[:, J[name] - 1] = matrix_to_axis_angle_np(np.einsum("fji,fjk->fik", parent, mirrored))
+            parent = mirrored
+        plan = coupling.CouplingPlan(np.full(2, coupling.TOGETHER), np.ones(2), np.full(2, np.nan), np.zeros(2))
+        target, _ = coupling.partner_targets(np.arange(2.0), root, body, plan, self.observation(2, right_arm=0.0),
+                                             ("right_arm",))["right_arm"]
+        right = body[:, coupling.body_indices("right_arm")]
+        self.assertTrue(np.allclose(target, right, atol=1e-6))
+        # mirroring the rotations relative to the twisted chest would turn the arm by about twice the twist
+        naive = coupling.mirror(body[:, coupling.body_indices("left_arm")])
+        self.assertGreater(np.degrees(np.linalg.norm(naive[0, 0] - right[0, 0])), 15.0)
+
+    def test_offsets_seen_carry_on_and_fade(self):
+        from bodyscan.dynamic import coupling
+        t = np.arange(0.0, 3.0, self.STEP)
+        offsets = np.zeros((len(t), 1))
+        anchored = np.zeros(len(t))
+        offsets[:10], anchored[:10] = 1.0, 1.0                    # observed until 0.45 s
+        offsets[30:32], anchored[30:32] = -1.0, 1.0               # briefly at 1.5 s
+        carried = coupling.anchored_offsets(t, offsets, anchored, memory=0.4)
+        self.assertAlmostEqual(carried[5, 0], 1.0)
+        self.assertAlmostEqual(carried[18, 0], 1.0 * np.exp(-0.4 / 0.4) * (1 - 0) + 0.0, delta=0.35)
+        self.assertLess(carried[20, 0], carried[12, 0])           # fades away from the observation
+        self.assertLess(carried[29, 0], 0.0)                      # close to the next one, takes its offset
+        self.assertLess(abs(carried[59, 0]), 0.05)                # long after any observation: the target alone
+
+
+class SteadyPathTest(unittest.TestCase):
+    def test_the_turn_changes_only_for_a_lasting_gain(self):
+        from bodyscan.dynamic.track import Tracker
+        angles = np.radians(8.0 * np.array([0, -1, 1, -2, 2]))
+        rng = np.random.default_rng(3)
+        cost = 0.1 + 0.03 * rng.random((40, len(angles)))
+        cost[::2, 1] -= 0.05                             # a slight preference flickering from frame to frame
+        cost[20:32, 4] -= 0.3                            # a clear one lasting 12 frames
+        path = Tracker.steady_path(cost, angles, switch=0.1)
+        chosen = np.degrees(angles[path])
+        self.assertTrue(np.all(chosen[22:30] == 16.0))
+        self.assertLessEqual(np.count_nonzero(np.diff(chosen)), 4)
+        # free changes: every frame takes its cheapest angle
+        free = Tracker.steady_path(cost, angles, switch=0.0)
+        self.assertTrue(np.array_equal(free, np.argmin(cost, axis=1)))
+
+
+class ReviewRenderTest(unittest.TestCase):
+    def test_guessed_limbs_are_drawn_violet(self):
+        from bodyscan.dynamic.review import render
+        # a square facing the camera (camera looks along +x)
+        vertices = np.array([[0.0, -0.3, 0.7], [0.0, 0.3, 0.7], [0.0, 0.3, 1.3], [0.0, -0.3, 1.3]])
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        center = np.array([0.0, 0.0, 1.0])
+        plain = render(vertices, faces, None, None, center, np.array([1.0, 0.0]), pixels=60).astype(int)
+        tinted = render(vertices, faces, None, None, center, np.array([1.0, 0.0]), pixels=60,
+                        tinted=np.ones(4, dtype=bool)).astype(int)
+        middle = plain[30, plain.shape[1] // 2], tinted[30, tinted.shape[1] // 2]
+        self.assertGreater(middle[0][1], middle[0][2])           # body: green above blue
+        self.assertGreater(middle[1][2], middle[1][1])           # guessed: blue above green
+
+
+class TurnLimitTest(unittest.TestCase):
+    def test_a_body_turned_around_between_frames_is_refused_and_a_real_turn_is_not(self):
+        from types import SimpleNamespace
+        from bodyscan.body.rotations import rotation_z_np
+        from bodyscan.dynamic.track import Tracker, TrackPipelineConfig
+        tracker = SimpleNamespace(config=TrackPipelineConfig(), yaw=Tracker.yaw)
+        times = list(np.arange(0.0, 1.0, 0.05))
+        rotations = [rotation_z_np(np.radians(90.0 * t)) for t in times]       # turning at 90 deg/s
+        check = Tracker.plausible_turn
+        self.assertTrue(check(tracker, rotation_z_np(np.radians(94.5)), 1.05, rotations, times))
+        self.assertTrue(check(tracker, rotation_z_np(np.radians(130.0)), 1.05, rotations, times))   # +35 deg search
+        self.assertFalse(check(tracker, rotation_z_np(np.radians(90.0 + 180.0)), 1.05, rotations, times))
+        # five 35 deg steps in a row add up to a turn around: refused against the frames before
+        self.assertFalse(check(tracker, rotation_z_np(np.radians(90.0 + 150.0)), 1.25, rotations, times))
+        tracker.config.tracking.max_turn_rate = 0.0
+        self.assertTrue(check(tracker, rotation_z_np(np.radians(90.0 + 180.0)), 1.05, rotations, times))
+
+
+@needs_torch
+class TrunkCollisionTest(unittest.TestCase):
+    def test_an_arm_through_the_trunk_is_found_and_one_at_the_side_is_not(self):
+        import torch
+        from bodyscan.body.model import vertex_normals
+        from bodyscan.dynamic import motions
+        from bodyscan.dynamic.track import TrunkCollision
+        model = load_test_body()
+        shaped = model.shaped()
+        labels = skeleton.part_labels(shaped.weights.detach().cpu().numpy())
+        collision = TrunkCollision(shaped, labels)
+        a = motions.a_pose(1, elevation=12.0)
+        sequence = motions.PoseSequence(np.zeros(1), np.zeros((1, 3)), np.zeros((1, 3)), motions.angles_to_body(a))
+        hanging, _ = sequence.posed(shaped, dtype=np.float64)
+        # the same arm moved 12 cm sideways into the trunk
+        names = np.array(skeleton.PART_NAMES)[labels]
+        arm = np.isin(names, ["left_upper_arm", "left_forearm", "left_hand"])
+        inwards = hanging[0][names == "torso_lower"].mean(axis=0) - hanging[0][arm].mean(axis=0)
+        inwards[2] = 0.0
+        inside = hanging.copy()
+        inside[0][arm] += 0.12 * inwards / np.linalg.norm(inwards)
+        vertices = np.concatenate([hanging, inside])
+        normals = vertex_normals(torch.as_tensor(vertices), shaped.faces).numpy()
+        self.assertLess(collision.depth(vertices[0], normals[0]), 0.02)        # hanging at the side
+        self.assertGreater(collision.depth(vertices[1], normals[1]), 0.04)     # in the trunk
+        # the energy pushes the arm out: zero at the side, positive inside
+        v = torch.tensor(vertices, requires_grad=True)
+        n = torch.as_tensor(normals[:, collision.trunk])
+        self.assertEqual(float(collision.energy(v[:1], n[:1], 0.02).detach()), 0.0)
+        energy = collision.energy(v[1:], n[1:], 0.02)
+        self.assertGreater(float(energy.detach()), 0.0)
+        energy.backward()
+        push = v.grad[1].numpy()[arm].sum(axis=0)              # the gradient points into the trunk
+        self.assertGreater(float(push @ inwards), 0.0)
+
+
+@needs_torch
 class TrackingPenaltyTest(unittest.TestCase):
     def test_free_space_penalties_are_bounded_and_the_wide_one_reaches_farther(self):
         import torch

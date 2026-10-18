@@ -62,6 +62,8 @@ import numpy as np
 
 from bodyscan.body import skeleton
 from bodyscan.config import param, section
+from bodyscan.dynamic import coupling
+from bodyscan.dynamic.coupling import CouplingConfig
 from bodyscan.log import Progress, info, warning
 
 
@@ -98,10 +100,12 @@ class TrackConfig:
     twist_weight: float = param(0.05, "weight pulling the twist of the spine and the rotation of the hips about "
                                       "the legs towards zero [per rad^2]: the pelvis can turn and the trunk and "
                                       "legs turn back by as much, which the points hardly tell apart")
-    head_weight: float = param(0.05, "weight pulling the neck and head rotations towards upright and facing "
+    head_weight: float = param(0.15, "weight pulling the neck and head rotations towards upright and facing "
                                      "forward [per rad^2]: the head is round, its points hardly tell how it is "
                                      "turned or tilted",
-                               effect="0: the head turns and tilts freely (the weird head angles of version 1.3)")
+                               effect="0: the head turns and tilts freely (the weird head angles of version 1.3); "
+                                      "0.05 (version 1.4): heads of people seen side-on still turned towards the "
+                                      "sensor by 30 to 40 deg at times")
     forearm_twist_weight: float = param(0.02, "weight pulling the twist of the forearms (about their long axis) "
                                               "and the wrist rotations towards rest [per rad^2]: the points of a "
                                               "forearm and of a relaxed hand hardly show them")
@@ -149,6 +153,25 @@ class TrackConfig:
                                    "dropped by the segmentation) the prediction keeps the last pose instead of "
                                    "extrapolating its velocity",
                               effect="large: a limb in motion before a gap is thrown on along its velocity")
+    max_turn_rate: float = param(240.0, "fastest turn of the whole body believed: a fit or a search that turns "
+                                        "the body faster than this (plus 40 deg) against any frame of the last second "
+                                        "is refused, and the plain fit from the prediction is kept (0: no limit)",
+                                 unit="deg/s",
+                                 effect="0: a frame whose points are hard to explain can turn the body around (in "
+                                        "the review of s02_jump02, version 1.4.1, the body turns by about 180 deg "
+                                        "within 0.2 s at the first take-off and stays so)")
+    facing_check: bool = param(True, "a frame still poorly explained after the searches, five frames in a row, is "
+                                     "fitted again from the opposite facing and from the two side-on ones (at most "
+                                     "every ten frames); a fit that explains the points clearly better (3 mm) is kept, "
+                                     "even if it turns the body around",
+                               effect="false: a body tracked facing the wrong way stays so")
+    penetration_weight: float = param(2.0, "weight keeping the arms out of the trunk: a vertex of a forearm, a "
+                                           "hand or the lower half of an upper arm deeper than penetration_margin "
+                                           "inside the trunk is pushed out (stage 1 and 2)",
+                                      effect="0: an arm the sensor does not see can sink into the trunk (version "
+                                             "1.4)")
+    penetration_margin: float = param(0.02, "depth of an arm inside the trunk that is not penalised (soft tissue, "
+                                            "clothes, an avatar slightly wider than the person)", unit="m")
 
 
 @dataclass
@@ -157,6 +180,17 @@ class RefineConfig:
     enabled: bool = param(True, "refine the whole sequence after the frame-by-frame fit")
     window: int = param(40, "frames optimised together")
     overlap: int = param(10, "frames shared with the previous window (held, for continuity)")
+    lookahead: int = param(10, "frames after each window optimised with it and refined again with the next "
+                               "window: the last frames of a window see what comes after them",
+                           effect="0: the end of each window is refined without the frames that follow (version "
+                                  "1.4); larger: slower")
+    free_space_hidden: bool = param(True, "the free-space term also covers the limb vertices the body model hides "
+                                          "behind itself: a hidden limb placed where the sensor saw empty space (out "
+                                          "of the shadow of the trunk) is pulled back like a visible one; the "
+                                          "measured ranges tell what really hid it. Stage 2 only: in stage 1 the "
+                                          "backs of the limbs along the silhouette edges (a pixel out) made the "
+                                          "limb searches noisy",
+                                    effect="false: only vertices the model shows the sensor are tested (version 1.4)")
     rounds: int = param(2, "correspondence rounds per window")
     iterations: int = param(40, "L-BFGS iterations per round")
     smoothness: str = param("jerk", "what the smoothness term penalises: the jerk (change of acceleration) or "
@@ -180,6 +214,7 @@ class RefineConfig:
 class TrackPipelineConfig:
     tracking: TrackConfig = section(TrackConfig)
     refine: RefineConfig = section(RefineConfig)
+    coupling: CouplingConfig = section(CouplingConfig)
 
 
 # Starting poses of an arm for the search of recover_limbs: (elevation, swing,
@@ -261,6 +296,21 @@ def free_space_loss(distance, scale: float, kind: str):
     wide = 4.0 * scale
     return 0.6 * geman_mcclure(distance, scale) + 0.4 * (scale / wide) ** 2 * geman_mcclure(distance, wide)
 
+# A limb counts as observed (keeps its tracked pose in complete_hidden_limbs) from this fraction of its
+# full view seen with points (coupling.limb_observation). A far leg seen side-on is mostly seen in part
+# (between the legs, below the near knee) and its tracked pose is better than the guess there (synthetic
+# side-on jumps: far foot 35 mm tracked, 52 mm guessed where a quarter to a half of it showed; a jog that
+# starts from standing, the far leg seen at 21 to 25 %: far ankle 16 mm anchored from a quarter, 12 mm
+# from a fifth); a far arm seen in part (a hand behind the near arm) is not (an arm moving unlike its
+# partner: far wrist 51 mm with the arm anchored from half seen, 87 mm from a quarter).
+OBSERVED_LIMB = {"arm": 0.5, "leg": 0.2}
+
+# Turn of a guessed limb into the shadow of the body (Tracker.shadow_turns): the cost of changing it
+# by 8 deg between two frames (in units of the fraction of the limb in the sensor's sight), and the
+# time over which the chosen turns are smoothed [s].
+TURN_SWITCH_COST = 0.1
+TURN_SMOOTHING = 0.2
+
 # Facings closer than this are one candidate of the initialisation (Tracker.initialise).
 INIT_FACING_GAP = np.radians(45.0)
 
@@ -326,6 +376,80 @@ class FrameData:
         silhouette = distance_map(self.uncertain, geometry.vertical_step, geometry.column_step)
         self.distance = torch.as_tensor(silhouette, dtype=dtype, device=device)
         self.center = person.center
+        self._tree = None
+
+    def tree(self):
+        """k-d tree of the person's points (built on first use)."""
+        if self._tree is None:
+            from scipy.spatial import cKDTree
+            self._tree = cKDTree(self.points_np)
+        return self._tree
+
+
+class TrunkCollision:
+    """Arms kept out of the trunk. Samples of the arm surface (forearms, hands and the lower halves
+    of the upper arms: the upper end of an upper arm always touches the trunk) and of the trunk
+    surface (pelvis to chest, without the armpits); the signed distance of an arm sample to the
+    trunk is taken as the largest distance to the tangent planes of its nearest trunk samples
+    (negative inside: exact for a convex trunk, close for a real one at the depths that matter)."""
+
+    NEAREST = 4
+
+    def __init__(self, shaped, part_labels: np.ndarray, arm_samples: int = 120, trunk_samples: int = 500):
+        rest = shaped.vertices.detach().cpu().numpy().astype(np.float64)
+        joints = shaped.rest_joints.detach().cpu().numpy().astype(np.float64)
+        names = np.array(skeleton.PART_NAMES)[part_labels]
+        J = skeleton.JOINT
+        arm = []
+        for side in ("left", "right"):
+            shoulder, elbow = joints[J[f"{side}_shoulder"]], joints[J[f"{side}_elbow"]]
+            axis = elbow - shoulder
+            along = (rest - shoulder) @ axis / max(float(axis @ axis), 1e-9)
+            lower_upper_arm = (names == f"{side}_upper_arm") & (along > 0.5)
+            members = np.flatnonzero(lower_upper_arm | np.isin(names, [f"{side}_forearm", f"{side}_hand"]))
+            arm.append(self._spread(members, arm_samples))
+        self.arm_of = {"left": arm[0], "right": arm[1]}
+        self.arm = np.concatenate(arm)
+        trunk = np.isin(names, ["pelvis", "torso_lower", "torso_middle", "torso_upper"])
+        for side in ("left", "right"):
+            trunk &= np.linalg.norm(rest - joints[J[f"{side}_shoulder"]], axis=1) > 0.12
+        self.trunk = self._spread(np.flatnonzero(trunk), trunk_samples)
+
+    @staticmethod
+    def _spread(indices: np.ndarray, count: int) -> np.ndarray:
+        """About 'count' of the indices, evenly over the list (vertex order follows the surface)."""
+        if len(indices) <= count:
+            return indices
+        return indices[np.round(np.linspace(0, len(indices) - 1, count)).astype(int)]
+
+    def energy(self, vertices, trunk_normals, margin: float, scale: float = 0.02, chunk: int = 16):
+        """Sum over frames of the mean squared excess depth (in units of 'scale') of the arm samples
+        inside the trunk. vertices (F, V, 3) torch; trunk_normals (F, trunk samples, 3), detached."""
+        import torch
+        arm = vertices[:, self.arm]
+        trunk = vertices[:, self.trunk]
+        with torch.no_grad():
+            nearest = torch.cat([torch.cdist(arm[i:i + chunk].detach(), trunk[i:i + chunk].detach())
+                                 .topk(self.NEAREST, dim=-1, largest=False).indices
+                                 for i in range(0, arm.shape[0], chunk)])                   # (F, A, K)
+        frames = torch.arange(arm.shape[0], device=arm.device)[:, None, None]
+        points = trunk[frames, nearest]                                                     # (F, A, K, 3)
+        normals = trunk_normals[frames, nearest]
+        signed = ((arm[:, :, None] - points) * normals).sum(-1).max(dim=-1).values         # (F, A)
+        excess = torch.relu(-signed - margin) / scale
+        return (excess ** 2).mean(dim=1).sum()
+
+    def depth(self, vertices: np.ndarray, normals: np.ndarray) -> float:
+        """Deepest arm sample inside the trunk [m] (0 when none) of one posed body (numpy)."""
+        return self.depth_of(vertices[self.arm], vertices[self.trunk], normals[self.trunk])
+
+    @classmethod
+    def depth_of(cls, arm: np.ndarray, trunk: np.ndarray, trunk_normals: np.ndarray) -> float:
+        """Deepest of the points 'arm' inside the trunk given by its samples and their normals [m]."""
+        from scipy.spatial import cKDTree
+        _, nearest = cKDTree(trunk).query(arm, k=cls.NEAREST)
+        signed = ((arm[:, None] - trunk[nearest]) * trunk_normals[nearest]).sum(-1).max(axis=1)
+        return float(max(-signed.min(), 0.0))
 
 
 @dataclass
@@ -390,6 +514,18 @@ class Tracker:
         frame_times = segmented.times()
         steps = np.diff(frame_times) if len(frame_times) > 1 else np.zeros(0)
         self.frame_period = float(np.median(steps[steps > 0])) if np.any(steps > 0) else 0.05
+        self.collision = TrunkCollision(self.shaped, labels)
+        limb_parts = [skeleton.PART_NAMES.index(f"{side}_{part}") for side in ("left", "right")
+                      for part in ("upper_arm", "forearm", "hand", "thigh", "shank", "foot")]
+        self.limb_vertices = np.isin(labels, limb_parts)
+        # per coupled limb about 40 vertices of each of its parts (a hand has as many vertices as the
+        # rest of the arm), to tell whether a guessed limb lies in the shadow of the body
+        self.limb_samples = {}
+        for limb, parts in coupling.LIMB_PARTS.items():
+            picked = [TrunkCollision._spread(np.flatnonzero(labels == skeleton.PART_NAMES.index(part)), 40)
+                      for part in parts]
+            self.limb_samples[limb] = np.concatenate(picked)
+        self.coupling_plan = None
 
     # -- posing ---------------------------------------------------------------------------------
     def rotations(self, body):
@@ -411,7 +547,10 @@ class Tracker:
 
     # -- correspondences ------------------------------------------------------------------------
     def match(self, vertices: np.ndarray, normals: np.ndarray, frame: FrameData,
-              max_distance: float | None = None) -> FrameMatch:
+              max_distance: float | None = None, hidden: bool = False) -> FrameMatch:
+        """Correspondences of the points with the visible body, and the vertices in free space or in
+        front of the measured surface: of the visible vertices, and with 'hidden' of the limbs wherever
+        they are (stage 2, refine.free_space_hidden)."""
         import torch
         from bodyscan.dynamic.fitting import closest_points, visible_faces, visible_vertices
         c = self.config.tracking
@@ -420,7 +559,11 @@ class Tracker:
         faces = visible_faces(self.faces_np, visible)
         face_ids, bary, distance = closest_points(vertices, self.faces_np, frame.points_np, faces)
         valid = np.flatnonzero(distance < (c.max_correspondence if max_distance is None else max_distance))
-        index = np.flatnonzero(visible)
+        # the free-space and in-front tests: the visible vertices, and with 'hidden' the limbs wherever
+        # they are (behind the measured surface a vertex is neither free nor in front, so the measured
+        # ranges decide what hides it, not the model)
+        tested = visible | self.limb_vertices if hidden else visible
+        index = np.flatnonzero(tested)
         rows, cols, ranges = g.project(vertices[index])
         unwrapped = g.column_distance_unwrapped(cols, frame.reference_column)
         r0, c0 = frame.crop_origin
@@ -456,7 +599,35 @@ class Tracker:
         return FrameMatch(tensor(valid), tensor(face_ids[valid]), tensor(bary[valid], self.dtype), tensor(index[free]),
                           (tensor(pixel_rows[free]), tensor(pixel_cols[free])), tensor(index[front]),
                           (tensor(pixel_rows[front]), tensor(pixel_cols[front])), tensor(measured[front], self.dtype),
-                          visible, max(len(index), 1), offsets[free], offsets[front], distance)
+                          visible, max(int(visible.sum()), 1), offsets[free], offsets[front], distance)
+
+    def in_sight(self, vertices: np.ndarray, frame: FrameData) -> np.ndarray:
+        """Per vertex (N, 3): where the sensor measured something else, so it would have seen the
+        vertex there: empty space beyond it outside the person, or a surface behind it inside (the
+        free-space and in-front tests of match() for any vertices, visible or not)."""
+        c = self.config.tracking
+        g = self.geometry
+        rows, cols, ranges = g.project(vertices)
+        unwrapped = g.column_distance_unwrapped(cols, frame.reference_column)
+        r0, c0 = frame.crop_origin
+        h, w = frame.mask.shape
+        rr = np.round(rows - r0).astype(int)
+        cc = np.round(unwrapped - c0).astype(int)
+        in_view = (rows > -0.5) & (rows < g.height - 0.5)
+        in_crop = in_view & (rr >= 0) & (rr < h) & (cc >= 0) & (cc < w)
+        rr_c, cc_c = np.clip(rr, 0, h - 1), np.clip(cc, 0, w - 1)
+        pixel_rows = np.clip(np.round(rows).astype(int), 0, g.height - 1)
+        pixel_cols = np.mod(np.round(cols).astype(int), g.width)
+        measured = np.where(in_crop, frame.crop_range[rr_c, cc_c], np.nan)
+        background = np.where(in_crop, frame.crop_background[rr_c, cc_c],
+                              self.background_range[pixel_rows, pixel_cols])
+        person = in_crop & frame.uncertain[rr_c, cc_c]
+        margin = max(c.free_space_margin, self.foreground_margin)
+        with np.errstate(invalid="ignore"):
+            nearest = np.fmin(measured, background)
+            free = in_view & ~person & np.isfinite(nearest) & (ranges < nearest - margin)
+            front = person & np.isfinite(measured) & (ranges < measured - margin)
+        return free | front
 
     # -- energy of one frame --------------------------------------------------------------------
     def frame_energy(self, vertices, frame: FrameData, match: FrameMatch, shifted_points=None,
@@ -545,6 +716,7 @@ class Tracker:
             with torch.no_grad():
                 vertices, _ = self.pose(omega, reference_t, pos, b)
                 normals = vertex_normals(vertices, self.faces)
+                trunk_normals = normals[:, self.collision.trunk]
             match = self.match(vertices[0].cpu().numpy().astype(np.float64),
                                normals[0].cpu().numpy().astype(np.float64), frame,
                                max(c.max_correspondence, 3.0 * scale))
@@ -562,6 +734,9 @@ class Tracker:
                 energy = self.frame_energy(vertices[0], frame, match, scale=scale)
                 energy = energy + c.limit_weight * limit_penalty(b)
                 energy = energy + neutral_priors(b, c)
+                if c.penetration_weight > 0:
+                    energy = energy + c.penetration_weight * self.collision.energy(vertices, trunk_normals,
+                                                                                   c.penetration_margin)
                 if c.relax_hidden_arms > 0:
                     energy = energy + (((b[:, self.hanging_index] - hanging) ** 2) * relax).sum()
                 if prediction is not None:
@@ -614,7 +789,21 @@ class Tracker:
         return {"distance": distance, "unexplained": float(np.mean(far)), "unexplained_count": int(far.sum()),
                 "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * len(match.silhouette) / match.visible_count),
                 "visible": match.visible, "far": far, "free": len(match.silhouette) / match.visible_count,
-                "free_vertices": free}
+                "free_vertices": free,
+                "observed_parts": self.observed_parts(vertices[0].cpu().numpy().astype(np.float64), match.visible,
+                                                      frame)}
+
+    def observed_parts(self, vertices: np.ndarray, visible: np.ndarray, frame: FrameData) -> np.ndarray:
+        """Per body part (skeleton.PART_NAMES) the fraction of its vertices that the sensor sees with
+        a point of the person within two robust scales (as in assess)."""
+        parts = len(skeleton.PART_NAMES)
+        index = np.flatnonzero(visible)
+        if len(index) == 0 or len(frame.points_np) == 0:
+            return np.zeros(parts)
+        distance, _ = frame.tree().query(vertices[index], k=1,
+                                         distance_upper_bound=2 * self.config.tracking.robust_scale)
+        seen = index[np.isfinite(distance)]
+        return np.bincount(self.part_labels[seen], minlength=parts) / np.maximum(self.part_count, 1)
 
     def limbs_to_search(self, rotation, position, body, frame: FrameData, explained: dict) -> set:
         """The limbs ('legs', 'left_arm', 'right_arm') and 'trunk' near the misfit of a frame: each
@@ -767,8 +956,9 @@ class Tracker:
         count = len(self.segmented)
         stop = count if stop is None else min(stop, count)
         rotations, positions, bodies, times, indices, energies, residuals = [], [], [], [], [], [], []
-        slots, restarts = [], []
-        searched = 0
+        slots, restarts, observed = [], [], []
+        searched = refused = turned = 0
+        poor_run, last_check, since = 0, -10 ** 9, 0
         prediction = None
         progress = Progress("tracked frames", stop - start)
         for k in range(start, stop):
@@ -787,6 +977,7 @@ class Tracker:
                 prediction = self.predict(rotations[last], positions[last], bodies[last], times[last], frame.time)
                 result = self.fit_frame(frame, prediction[0], prediction[1], prediction[2], prediction)
                 explained = self.explain(result[0], result[1], result[2], frame)
+                plain = (result, explained)                # the fit from the prediction, kept if a search turns
                 residual = float(np.median(explained["distance"]))
                 if residual > c.lost_residual:
                     yaw = np.arctan2(rotations[-1][1, 0], rotations[-1][0, 0])
@@ -807,6 +998,23 @@ class Tracker:
                                            limbs=limbs, trunk=trunk)
                 explained = self.explain(result[0], result[1], result[2], frame)
                 searched += 1
+            if rotations and not self.plausible_turn(result[0], frame.time, rotations[since:], times[since:]):
+                # people do not turn around between two frames: a search that did is wrong
+                result, explained = plain
+                restarted = False
+                refused += 1
+            poorly = ((explained["unexplained"] > 2 * c.recover_fraction and explained["unexplained_count"] >= 10)
+                      or explained["free"] > 2 * c.recover_free_space)
+            poor_run = poor_run + 1 if poorly else 0
+            if c.facing_check and rotations and poor_run >= 5 and k - last_check >= 10:
+                last_check = k
+                retry, retried = self.facing_retry(frame, result)
+                if retried["score"] < explained["score"] - 0.003:
+                    result, explained, restarted = retry, retried, True
+                    turned += 1
+                    poor_run = 0
+            if restarted:
+                since = len(rotations)          # the turn limit counts from the frames after a new start
             rotation, position, body, energy, _ = result
             rotations.append(rotation)
             positions.append(position)
@@ -817,14 +1025,53 @@ class Tracker:
             restarts.append(restarted)
             energies.append(energy)
             residuals.append(float(np.median(explained["distance"])))
+            observed.append(explained["observed_parts"])
             progress.maybe(k - start + 1, 25)
         root = np.array([matrix_to_axis_angle_np(r) for r in rotations])
         if searched:
             info(f"  limbs searched again in {searched} frames (points left unexplained by the fit)")
+        if refused or turned:
+            info(f"  turns of the whole body refused in {refused} frames (faster than {c.max_turn_rate:g} deg/s); "
+                 f"facing changed after a poor fit in {turned} frames")
         return {"times": np.array(times), "frame_index": np.array(indices), "slot": np.array(slots, dtype=np.int64),
-                "restart": np.array(restarts, dtype=bool), "searches": searched, "root_rotation": root,
+                "restart": np.array(restarts, dtype=bool), "searches": searched, "turns_refused": refused,
+                "facing_changes": turned, "root_rotation": root,
                 "root_matrix": np.array(rotations), "root_position": np.array(positions), "body": np.array(bodies),
-                "energy": np.array(energies), "residual": np.array(residuals)}
+                "energy": np.array(energies), "residual": np.array(residuals),
+                "observed": np.array(observed).reshape(len(times), len(skeleton.PART_NAMES))}
+
+    @staticmethod
+    def yaw(rotation) -> float:
+        """Facing direction [rad] of a root rotation (the forward axis +x of the upright frame)."""
+        return float(np.arctan2(rotation[1, 0], rotation[0, 0]))
+
+    def plausible_turn(self, rotation, time: float, rotations, times) -> bool:
+        """Whether the facing of 'rotation' at 'time' is within max_turn_rate (plus 40 deg) of the facing
+        of every frame tracked in the second before."""
+        c = self.config.tracking
+        if c.max_turn_rate <= 0:
+            return True
+        yaw, rate, slack = self.yaw(rotation), np.radians(c.max_turn_rate), np.radians(40.0)
+        for j in range(len(times) - 1, -1, -1):
+            elapsed = time - times[j]
+            if elapsed > 1.0:
+                break
+            if abs(np.angle(np.exp(1j * (yaw - self.yaw(rotations[j]))))) > rate * max(elapsed, 0.0) + slack:
+                return False
+        return True
+
+    def facing_retry(self, frame: FrameData, result):
+        """The frame fitted afresh from the opposite facing and the two side-on ones (the start pose,
+        initialise), the limbs searched where its points stay unexplained: (result, explain())."""
+        c = self.config.tracking
+        yaw = self.yaw(result[0])
+        retry = self.initialise(frame, None, yaw + np.radians([180.0, 90.0, -90.0]), result[1])
+        retried = self.explain(retry[0], retry[1], retry[2], frame)
+        if retried["unexplained"] > c.recover_fraction or retried["free"] > c.recover_free_space:
+            near = self.limbs_to_search(retry[0], retry[1], retry[2], frame, retried)
+            retry = self.recover_limbs(frame, retry, None, None, limbs=(near - {"trunk"}) or None, trunk=True)
+            retried = self.explain(retry[0], retry[1], retry[2], frame)
+        return retry, retried
 
     @staticmethod
     def predict(rotations, positions, bodies, times, t):
@@ -838,6 +1085,197 @@ class Tracker:
         position = positions[-1] + (positions[-1] - positions[-2]) * ratio
         body = bodies[-1] + 0.5 * (bodies[-1] - bodies[-2]) * ratio
         return rotation, position, body
+
+    # -- left-right coupling of hidden limbs (bodyscan.dynamic.coupling) ---------------------------
+    def joints_of(self, result: dict, batch: int = 64) -> np.ndarray:
+        """(F, 55, 3) world joints of a result."""
+        import torch
+        frames = len(result["times"])
+        out = np.zeros((frames, skeleton.NUM_JOINTS, 3))
+        for first in range(0, frames, batch):
+            span = slice(first, min(first + batch, frames))
+
+            def tensor(values):
+                return torch.as_tensor(values, dtype=self.dtype, device=self.device)
+
+            with torch.no_grad():
+                zero = torch.zeros(span.stop - span.start, 3, dtype=self.dtype, device=self.device)
+                _, joints = self.pose(zero, tensor(result["root_matrix"][span]), tensor(result["root_position"][span]),
+                                      tensor(result["body"][span]))
+            out[span] = joints.cpu().numpy()
+        return out
+
+    def plan_coupling(self, result: dict) -> dict | None:
+        """The kind of motion around every frame (alternating, together, unknown) and its cycle,
+        from the observed limbs and the pelvis of the stage-1 result; None when switched off."""
+        k = self.config.coupling
+        if not k.enabled or len(result["times"]) < 8 or "observed" not in result:
+            return None
+        joints = self.joints_of(result)
+        signals = coupling.signals(joints, result["root_matrix"], result["body"])
+        observation = coupling.limb_observation(result["observed"])
+        plan = coupling.estimate(result["times"], signals, observation, k, step=self.frame_period)
+        limbs = coupling.LIMBS if k.couple_legs else ("left_arm", "right_arm")
+        return {"plan": plan, "observation": observation, "limbs": limbs}
+
+    def start_hidden_limbs(self, result: dict, prepared: dict) -> int:
+        """With coupling.start_from_guess, the hidden limbs start stage 2 from the guess of
+        complete_hidden_limbs (not turned into the shadow): a far arm left where stage 1 put it (still,
+        in the trunk, out to the side) disturbs the refinement of the rest of the body (synthetic side-on
+        jumps: velocity error of the near hand 0.24 m/s with the guessed start, 0.34 without; probably
+        through the joint smoothness, which ties the far arm to the trunk). Returns the number of
+        limb-frames changed."""
+        if not self.config.coupling.start_from_guess:
+            return 0
+        changed = self.guess_hidden_limbs(result, prepared, turn=False)
+        result.pop("guessed", None)
+        result.pop("guessed_limbs", None)
+        return int(sum(changed.values()))
+
+    def complete_hidden_limbs(self, result: dict, prepared: dict) -> dict:
+        """After stage 2, every limb the sensor does not see takes its partner's refined motion,
+        mirrored (coupling.limb_guesses: at the same time or half a cycle away), turned about the
+        vertical where the guess would lie in the sensor's sight (shadow_turns), plus the offset from
+        it observed where the limb did show: between two observations up to 3 s apart the offset
+        changes linearly (coupling.bridged_offsets), so the limb meets both and moves like its partner
+        in between; before the first and after the last, and in longer gaps, it fades over
+        offset_memory. Where the limb was observed (OBSERVED_LIMB of it seen with points) it keeps its
+        tracked pose; where the plan is unsure (weight under 0.5) the guess is blended in partly. (The
+        guess is applied after stage 2, not as a term of it: with no points on the limb, the energy of
+        a window is dominated by the data of the rest of the body and the optimiser hardly moves the
+        limb; a target turned by 20 deg changed the far wrist by 2 mm.) Returns {limb: frames
+        changed}."""
+        return self.guess_hidden_limbs(result, prepared, turn=True)
+
+    def guess_hidden_limbs(self, result: dict, prepared: dict, turn: bool) -> dict:
+        """The hidden limbs of 'result' replaced by their guess (complete_hidden_limbs; turned into the
+        shadow of the body when 'turn'), in place. Returns {limb: frames changed}."""
+        k = self.config.coupling
+        times, root, positions = result["times"], result["root_matrix"], result["root_position"]
+        tracked = result["body"]
+        body = tracked.copy()
+        plan, observation = prepared["plan"], prepared["observation"]
+        guesses = coupling.limb_guesses(times, root, tracked, plan, observation, prepared["limbs"])
+        lower, upper = skeleton.limit_arrays()
+        cache = {}
+
+        def frame(i):
+            if i not in cache:
+                cache[i] = FrameData(self.segmented.load(int(result["slot"][i])), self.geometry, self.device, self.dtype)
+            return cache[i]
+
+        changed = {}
+        result["guessed_limbs"] = list(prepared["limbs"])
+        result["guessed"] = np.zeros((len(times), len(prepared["limbs"])))
+        for number, limb in enumerate(prepared["limbs"]):
+            guess = guesses[limb]
+            index = coupling.body_indices(limb)
+            seen = observation[limb]
+            # where the limb was observed (OBSERVED_LIMB of its full view seen with points: the points place
+            # it) it keeps its tracked pose: the guess plus the offset observed there; between observations
+            # the offset changes linearly, so the limb meets them on both sides and moves like its partner
+            # in between (in a short gap that is nearly the plain interpolation of the observations, in a
+            # long one the partner's swing). The blend follows the weight of the guess, which changes
+            # smoothly (coupling.estimate, limb_guesses); at an anchored frame the guess plus its offset is
+            # the tracked pose, so the limb stays continuous where the anchors start and end.
+            anchored = (seen >= OBSERVED_LIMB[limb.split("_")[1]]).astype(np.float64)
+            blend = np.clip(2.0 * guess.weight, 0.0, 1.0) * (1.0 - anchored)
+            result["guessed"][:, number] = blend * (1.0 - seen)
+            if not np.any(blend > 0.05):
+                continue
+            offsets = tracked[:, index] - guess.local()
+            carried = coupling.bridged_offsets(times, offsets, anchored, k.offset_memory)
+            angle = None
+            if turn:
+                angle = self.shadow_turns(limb, guess, carried, blend, root, positions, tracked, frame)
+                offsets = tracked[:, index] - guess.local(angle)
+                carried = coupling.bridged_offsets(times, offsets, anchored, k.offset_memory)
+            guessed = np.clip(guess.local(angle) + carried, lower[skeleton.BODY][index], upper[skeleton.BODY][index])
+            body[:, index] = (1 - blend)[:, None, None] * tracked[:, index] + blend[:, None, None] * guessed
+            changed[limb] = int(np.sum(blend > 0.05))
+        result["body"] = body
+        return changed
+
+    def shadow_turns(self, limb: str, guess, carried: np.ndarray, blend: np.ndarray, root_matrix: np.ndarray,
+                     positions: np.ndarray, body: np.ndarray, frame, batch: int = 48) -> np.ndarray:
+        """(F,) turn [rad] about the vertical of the guessed limb: the facing of a person seen
+        side-on is uncertain by 5 to 10 deg (the points of the side of a trunk hardly tell), and
+        mirroring at a midplane turned by that much turns the guess by twice as much, often out of
+        the shadow of the body. Of 0, +-8, +-16 ... +-shadow_turn deg (legs: half) the turn is kept
+        that puts the fewest of the limb's vertices where the sensor would have seen them (in_sight),
+        an arm not inside the trunk, a small turn preferred (an eighth of the limb in sight is worth
+        the largest turn), at the frames where the guess counts (blend over 0.3), along the path of
+        least cost over these frames with a cost for every change (steady_path: the turn changes only
+        where that keeps the limb out of sight for a while); then carried on linearly through the
+        other frames and smoothed over TURN_SMOOTHING, so that the guessed limb turns slowly (a hand
+        0.6 m from the shoulder moves 1 cm per degree). frame(i): the FrameData of frame i."""
+        import torch
+        from scipy.ndimage import gaussian_filter1d
+        k_c = self.config.coupling
+        count = len(blend)
+        largest = k_c.shadow_turn if limb.endswith("arm") else 0.5 * k_c.shadow_turn
+        steps = int(largest // 8.0)
+        candidates = np.flatnonzero(blend > 0.3)
+        if steps <= 0 or len(candidates) == 0:
+            return np.zeros(count)
+        angles = np.radians(8.0 * np.concatenate([[0], np.ravel([[-n, n] for n in range(1, steps + 1)])]))
+        samples = self.limb_samples[limb]
+        index = coupling.body_indices(limb)
+        arm_samples = self.collision.arm_of[limb.split("_")[0]] if limb.endswith("arm") else None
+        margin = self.config.tracking.penetration_margin
+        cost = np.zeros((len(candidates), len(angles)))
+
+        def tensor(values):
+            return torch.as_tensor(values, dtype=self.dtype, device=self.device)
+
+        for first in range(0, len(candidates), batch):
+            chunk = candidates[first:first + batch]
+            zero = torch.zeros(len(chunk), 3, dtype=self.dtype, device=self.device)
+            trunk = trunk_normals = None
+            if arm_samples is not None:
+                from bodyscan.body.model import vertex_normals
+                with torch.no_grad():
+                    full, _ = self.pose(zero, tensor(root_matrix[chunk]), tensor(positions[chunk]), tensor(body[chunk]))
+                    normals = vertex_normals(full, self.faces)
+                trunk = full[:, self.collision.trunk].cpu().numpy().astype(np.float64)
+                trunk_normals = normals[:, self.collision.trunk].cpu().numpy().astype(np.float64)
+            for a, angle in enumerate(angles):
+                trial = body[chunk].copy()
+                trial[:, index] = guess.local(np.full(count, angle))[chunk] + carried[chunk]
+                with torch.no_grad():
+                    vertices, _ = self.pose(zero, tensor(root_matrix[chunk]), tensor(positions[chunk]), tensor(trial),
+                                            subset=samples if arm_samples is None
+                                            else np.concatenate([samples, arm_samples]))
+                vertices = vertices.cpu().numpy().astype(np.float64)
+                for i, f in enumerate(chunk):
+                    cost[first + i, a] = self.in_sight(vertices[i, :len(samples)], frame(f)).mean()
+                    if arm_samples is not None:
+                        depth = TrunkCollision.depth_of(vertices[i, len(samples):], trunk[i], trunk_normals[i])
+                        cost[first + i, a] += max(depth - margin, 0.0) / 0.02
+        cost += 0.125 * np.abs(angles)[None] / max(angles.max(), 1e-9)
+        chosen = angles[self.steady_path(cost, angles, TURN_SWITCH_COST)]
+        # carried on through the other frames (observed ones too: their offset is taken against the
+        # turned guess, so the limb stays continuous), then smoothed
+        turn = np.interp(np.arange(count), candidates, chosen)
+        return gaussian_filter1d(turn, max(TURN_SMOOTHING / self.frame_period, 0.5), mode="nearest")
+
+    @staticmethod
+    def steady_path(cost: np.ndarray, angles: np.ndarray, switch: float) -> np.ndarray:
+        """Indices (N,) into 'angles' of the path through cost (N, len(angles)) of least total cost
+        plus 'switch' for every 8 deg of change between neighbours (Viterbi)."""
+        steps = np.abs(angles[:, None] - angles[None, :]) / np.radians(8.0) * switch    # (from, to)
+        total = cost[0].copy()
+        back = np.zeros(cost.shape, dtype=np.int64)
+        columns = np.arange(len(angles))
+        for i in range(1, len(cost)):
+            options = total[:, None] + steps
+            back[i] = np.argmin(options, axis=0)
+            total = options[back[i], columns] + cost[i]
+        path = np.zeros(len(cost), dtype=np.int64)
+        path[-1] = int(np.argmin(total))
+        for i in range(len(cost) - 1, 0, -1):
+            path[i - 1] = back[i, path[i]]
+        return path
 
     # -- stage 2 ----------------------------------------------------------------------------------
     def contacts(self, result: dict) -> np.ndarray:
@@ -900,7 +1338,8 @@ class Tracker:
         starts = list(range(0, max(frames - r.overlap, 1), step))
         progress = Progress("refined windows", len(starts))
         for window_number, first in enumerate(starts):
-            last = min(first + r.window, frames)
+            # the look-ahead frames are optimised with the window and refined again with the next one
+            last = min(first + r.window + max(r.lookahead, 0), frames)
             held = r.overlap if first > 0 else 0
             span = np.arange(first, last)
             count = len(span)
@@ -932,9 +1371,10 @@ class Tracker:
                     o, p, bb = assemble()
                     vertices, _ = self.pose(o, ref_t, p, bb)
                     normals = vertex_normals(vertices, self.faces)
-                matches = [self.match(vertices[i].cpu().numpy().astype(np.float64),
-                                      normals[i].cpu().numpy().astype(np.float64), data[k],
-                                      max(c.max_correspondence, 3.0 * scale))
+                    trunk_normals = normals[:, self.collision.trunk]
+                vertices_np = vertices.cpu().numpy().astype(np.float64)
+                matches = [self.match(vertices_np[i], normals[i].cpu().numpy().astype(np.float64), data[k],
+                                      max(c.max_correspondence, 3.0 * scale), hidden=r.free_space_hidden)
                            for i, k in enumerate(span)]
                 seen = np.stack([self.joint_seen(m.visible) for m in matches])          # (count, 22)
                 hidden_weight = 1.0 + r.hidden_smoothness * self.hidden_factor(seen)
@@ -984,10 +1424,13 @@ class Tracker:
                         energy = energy + self.frame_energy(vertices[i], data[k], match, scale=scale, **moved)
                     energy = energy / count + c.limit_weight * limit_penalty(bb) / count
                     energy = energy + neutral_priors(bb, c) / count
+                    dt1 = (t_span[1:] - t_span[:-1]).clamp_min(1e-4)
+                    if c.penetration_weight > 0:
+                        energy = energy + c.penetration_weight * self.collision.energy(
+                            vertices, trunk_normals, c.penetration_margin) / count
                     # smoothness of the joint motion (non-uniform frame times): accelerations at the inner
                     # frames, jerk between them; normalised by the scale (about |x| / scale when large)
                     j = joints[:, main]
-                    dt1 = (t_span[1:] - t_span[:-1]).clamp_min(1e-4)
                     velocity = (j[1:] - j[:-1]) / dt1[:, None, None]
                     accel = 2.0 * (velocity[1:] - velocity[:-1]) / (t_span[2:] - t_span[:-2]).clamp_min(1e-4)[:, None, None]
                     if r.smoothness == "jerk" and count > 3:
@@ -1048,6 +1491,7 @@ class Tracker:
         clutter = np.zeros(frames)
         violation = np.zeros(frames)
         floor = np.zeros(frames)
+        arm_in_trunk = np.zeros(frames)
         joints_out = np.zeros((frames, skeleton.NUM_JOINTS, 3), dtype=np.float32)
         lower, upper = skeleton.limit_arrays()
         excess = np.degrees(np.maximum(lower[skeleton.BODY] - result["body"], 0)
@@ -1075,8 +1519,13 @@ class Tracker:
                 reach = self.config.tracking.max_correspondence
                 unexplained[k] = np.mean((distance > 0.05) & (distance < reach))
                 clutter[k] = np.mean(distance >= reach)
+                # of the vertices the model shows the sensor (match without 'hidden'): the hidden limb vertices
+                # that stage 2 also tests include the back of every limb along the edge of its silhouette, a
+                # pixel out by the discretisation (about 1 % of the visible count on the truth of synthetic
+                # takes), which would flag most frames
                 violation[k] = len(match.silhouette) / match.visible_count
                 floor[k] = v[self.feet_np, 2].min()
+                arm_in_trunk[k] = self.collision.depth(v, normals[i].cpu().numpy().astype(np.float64))
                 # observed: visible vertices with a point of the person within 2 robust scales
                 visible = np.flatnonzero(match.visible)
                 if len(visible):
@@ -1087,7 +1536,7 @@ class Tracker:
         observed[:, self.part_count == 0] = np.nan                     # parts without vertices in this body
         return {"joints": joints_out, "residual_median": residual_median, "residual_p90": residual_p90,
                 "unexplained": unexplained, "clutter": clutter, "silhouette_violation": violation, "floor": floor,
-                "limit_excess_deg": excess, "observed": observed}
+                "limit_excess_deg": excess, "observed": observed, "arm_in_trunk": arm_in_trunk}
 
 
 # ----------------------------------------------------------------------------
@@ -1123,6 +1572,7 @@ def flag_frames(quality: dict, contacts: np.ndarray, times: np.ndarray) -> dict:
         "sliding": sliding > 0.3,
         "joint_limits": quality["limit_excess_deg"] > 10.0,
         "acceleration": accel > 120.0,
+        "arm_in_trunk": quality.get("arm_in_trunk", np.zeros(frames)) > 0.04,
     }
     flags = np.zeros(frames, dtype=np.int64)
     for bit, (name, mask) in enumerate(checks.items()):
@@ -1146,6 +1596,7 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
         "contact_fraction": {"left": float(contacts[:, 0].mean()), "right": float(contacts[:, 1].mean())},
         **(extra or {}),
     }
+    frames = len(result["times"])
     np.savez_compressed(path, times=result["times"], root_rotation=result["root_rotation"],
                         root_position=result["root_position"], body=result["body"],
                         frame_index=result["frame_index"], joints=quality["joints"], contacts=contacts,
@@ -1153,10 +1604,16 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
                         residual_p90=quality["residual_p90"], unexplained=quality["unexplained"],
                         clutter=quality.get("clutter", np.zeros_like(quality["unexplained"])),
                         silhouette_violation=quality["silhouette_violation"],
-                        floor=quality["floor"], limit_excess_deg=quality["limit_excess_deg"], flags=flags["flags"],
+                        floor=quality["floor"], limit_excess_deg=quality["limit_excess_deg"],
+                        arm_in_trunk=quality.get("arm_in_trunk", np.zeros(frames)), flags=flags["flags"],
                         flag_names=np.array(flags["flag_names"]), avatar=str(avatar_path), model=avatar.model_path,
                         model_sha1=avatar.model_sha1, level=np.int64(config.tracking.level),
-                        config=json.dumps({"tracking": asdict(config.tracking), "refine": asdict(config.refine)}),
+                        coupling_mode=result.get("coupling_mode", np.zeros(frames, dtype=np.int64)),
+                        coupling_confidence=result.get("coupling_confidence", np.zeros(frames)),
+                        guessed=result.get("guessed", np.zeros((frames, 0))).astype(np.float32),
+                        guessed_limbs=np.array(result.get("guessed_limbs", []), dtype=str),
+                        config=json.dumps({"tracking": asdict(config.tracking), "refine": asdict(config.refine),
+                                           "coupling": asdict(config.coupling)}),
                         summary=json.dumps(summary))
     Path(str(path).replace(".npz", "") + ".json").write_text(json.dumps(summary, indent=2))
     return summary
@@ -1195,19 +1652,37 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
     first, last = start, len(segmented) if stop is None else min(stop, len(segmented))
     info(f"tracking frames {first} to {last - 1} of {len(segmented)} on {device} ({str(dtype).split('.')[-1]})")
     result = tracker.track(start, stop)
+    prepared = None
+    if config.refine.enabled and len(result["times"]) >= 3:
+        prepared = tracker.plan_coupling(result)
+        if prepared is not None:
+            changed = tracker.start_hidden_limbs(result, prepared)
+            share = prepared["plan"].summary()
+            info(f"  hidden limbs coupled to their partner: motion alternating in {share['alternating']:.0%} of the "
+                 f"frames, together in {share['together']:.0%}, unknown in {share['unknown']:.0%}"
+                 + (f"; {changed} limb-frames start from the partner's motion" if changed else ""))
     contacts = tracker.contacts(result)
     if config.refine.enabled and len(result["times"]) >= 3:
         info("refining the whole sequence")
         result = tracker.refine(result, contacts)
+        if prepared is not None:
+            completed = tracker.complete_hidden_limbs(result, prepared)
+            if completed:
+                info("  hidden limbs completed from their partner: "
+                     + ", ".join(f"{limb.replace('_', ' ')} {count} frames" for limb, count in completed.items()))
         contacts = tracker.contacts(result)
     quality = tracker.assess(result)
     flags = flag_frames(quality, contacts, result["times"])
     out = Path(out)
     if out.suffix != ".npz":
         out = out.with_suffix(".npz")
-    summary = save_motion(out, result, quality, contacts, flags, avatar_path, avatar, config,
-                          {"limb_searches": int(result.get("searches", 0)),
-                           "restarts": int(np.sum(result.get("restart", [])))})
+    extra = {"limb_searches": int(result.get("searches", 0)), "restarts": int(np.sum(result.get("restart", []))),
+             "turns_refused": int(result.get("turns_refused", 0)), "facing_changes": int(result.get("facing_changes", 0))}
+    if prepared is not None:
+        extra["coupling"] = prepared["plan"].summary()
+        result["coupling_mode"] = prepared["plan"].mode
+        result["coupling_confidence"] = prepared["plan"].confidence
+    summary = save_motion(out, result, quality, contacts, flags, avatar_path, avatar, config, extra)
     info(summary_text(summary))
     if any(flags["counts"].values()):
         warning("some frames are flagged: look at them with 'bodyscan review-motion'")

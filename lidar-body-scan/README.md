@@ -4,7 +4,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.4.1-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.5.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
 ![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)
@@ -115,7 +115,7 @@ Version 1.2 animates the person. The turntable scan gives the person's body (the
 
 <p align="center"><sub>Synthetic data: the procedural test body walking 2 m from a simulated OS0-128 (1024 x 20), tracked by <code>bodyscan track</code>. Green dots are the LiDAR points of each frame, on the tracked body. Top: seen from the LiDAR. Bottom: the same instants from the far side, where the sensor saw almost nothing; that side follows from the body model and the motion rules, not from data.</sub></p>
 
-The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), joint limits, the floor, feet that do not slide and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
+The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), the limb is guessed from its partner on the other side, mirrored, at the same time in a jump or half a cycle later in a walk or a run, and joined to where the sensor did see it before and after (since version 1.5); joint limits, the floor, feet that do not slide, arms kept out of the trunk and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed and which were guessed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
 
 ---
 
