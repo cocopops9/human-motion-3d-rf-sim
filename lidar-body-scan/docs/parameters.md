@@ -722,7 +722,6 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--silhouette-weight` | `2.0` | weight of the silhouette and free-space term | larger keeps hidden limbs out of the free space more firmly |
 | `--silhouette-scale` | `0.06` m | robust scale of the silhouette distances |  |
 | `--free-space-loss` | `wide` | how the free-space terms grow with the distance of a vertex from where the sensor allows it: wide (a robust term at the scale plus one at 4 times the scale: a limb 20 to 50 cm out in empty space is still pulled back) or bounded (the robust term alone: the pull fades beyond about two scales; version 1.3). Both are bounded, so that leaving the points altogether never pays | bounded lets a limb the sensor sees as empty space stay there (arms stretched into the air, a twisted trunk) |
-| `--free-space-hidden` | `True` | the free-space test also covers the limb vertices the body model hides behind itself: a hidden limb placed where the sensor saw empty space (out of the shadow of the trunk) is pulled back like a visible one; the measured ranges tell what really hid it | false: only vertices the model shows the sensor are tested (version 1.4) |
 | `--free-space-margin` | `0.06` m | a vertex counts as in free space when the sensor saw this much beyond it |  |
 | `--limit-weight` | `5.0` | weight of the anatomical joint limits |  |
 | `--twist-weight` | `0.05` | weight pulling the twist of the spine and the rotation of the hips about the legs towards zero [per rad^2]: the pelvis can turn and the trunk and legs turn back by as much, which the points hardly tell apart |  |
@@ -760,6 +759,7 @@ Whole-sequence refinement (stage 2): natural motion.
 | `--refine-window` | `40` | frames optimised together |  |
 | `--overlap` | `10` | frames shared with the previous window (held, for continuity) |  |
 | `--lookahead` | `10` | frames after each window optimised with it and refined again with the next window: the last frames of a window see what comes after them | 0: the end of each window is refined without the frames that follow (version 1.4); larger: slower |
+| `--free-space-hidden` | `True` | the free-space term also covers the limb vertices the body model hides behind itself: a hidden limb placed where the sensor saw empty space (out of the shadow of the trunk) is pulled back like a visible one; the measured ranges tell what really hid it. Stage 2 only: in stage 1 the backs of the limbs along the silhouette edges (a pixel out) made the limb searches noisy | false: only vertices the model shows the sensor are tested (version 1.4) |
 | `--refine-rounds` | `2` | correspondence rounds per window |  |
 | `--refine-iterations` | `40` | L-BFGS iterations per round |  |
 | `--smoothness` | `jerk` | what the smoothness term penalises: the jerk (change of acceleration) or the acceleration of the joints | acceleration also pulls a jump's flight (free fall, 9.81 m/s2) flatter |

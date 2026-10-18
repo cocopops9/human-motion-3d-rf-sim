@@ -475,7 +475,8 @@ class HiddenLimbTest(unittest.TestCase):
         try:
             model = load_test_body()
             shaped = model.shaped()
-            motion = motions.jump(shaped, count=2, height=0.3, heading_deg=-180.0, stand_before=1.6, pause=0.6,
+            # heading 90 deg: the left side towards the sensor (180 deg would face it, both arms in view)
+            motion = motions.jump(shaped, count=2, height=0.3, heading_deg=90.0, stand_before=1.6, pause=0.6,
                                   stand_after=0.6)
             motion.save(folder.path / "motion.npz")
             config = SimulateMotionConfig()
@@ -489,9 +490,11 @@ class HiddenLimbTest(unittest.TestCase):
             result = tracker.track(30, None)
             prepared = tracker.plan_coupling(result)
             self.assertGreater(np.mean(prepared["plan"].mode == coupling.TOGETHER), 0.7)
+            alone = dict(result)                      # the far arm as the frame-by-frame fit leaves it
+            alone["body"] = result["body"].copy()
             tracker.start_hidden_limbs(result, prepared)
             refined = tracker.refine(result, tracker.contacts(result))
-            alone, completed_result = dict(refined), dict(refined)
+            completed_result = dict(refined)
             completed = tracker.complete_hidden_limbs(completed_result, prepared)
             body = avatar.shaped(model, 0)
             truth, meta = load_truth(take)
@@ -499,17 +502,17 @@ class HiddenLimbTest(unittest.TestCase):
             far = "left" if seen["left_arm"].mean() < seen["right_arm"].mean() else "right"
             self.assertIn(f"{far}_arm", completed)
             errors = {}
-            for name, poses in (("alone", alone["body"]), ("completed", completed_result["body"])):
-                estimate = motions.PoseSequence(result["times"], refined["root_rotation"], refined["root_position"],
-                                                poses)
+            for name, source in (("alone", alone), ("completed", completed_result)):
+                estimate = motions.PoseSequence(result["times"], source["root_rotation"], source["root_position"],
+                                                source["body"])
                 _, joints = estimate.posed(body)
                 _, true_joints = truth.sample(result["times"]).posed(body)
                 true_joints = to_sensor_floor_frame(true_joints.reshape(-1, 3), meta["sensor_pose"]).reshape(
                     true_joints.shape)
                 wrist = J[f"{far}_wrist"]
                 errors[name] = float(np.linalg.norm(joints[:, wrist] - true_joints[:, wrist], axis=1).mean())
-            self.assertLess(errors["completed"], 0.75 * errors["alone"])
-            self.assertLess(errors["completed"], 0.12)
+            self.assertLess(errors["completed"], 0.75 * errors["alone"], errors)
+            self.assertLess(errors["completed"], 0.12, errors)
         finally:
             folder.cleanup()
 

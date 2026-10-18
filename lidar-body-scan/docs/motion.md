@@ -361,9 +361,13 @@ wrist by 2 mm). The hidden limbs do start stage 2 from the guess, not turned
 (`--start-from-guess`): a far arm left where stage 1 put it disturbed the
 refinement of the rest of the body (synthetic side-on jumps: velocity error
 of the near hand 0.34 m/s without, 0.24 m/s with). The
-free-space term of stage 1 and 2 now also covers the limb vertices that the
-body model hides behind itself (`--free-space-hidden`): what hides a limb
-from the sensor is told by the measured ranges, not by the model.
+free-space term of stage 2 now also covers the limb vertices that the body
+model hides behind itself (`--free-space-hidden`): what hides a limb from
+the sensor is told by the measured ranges, not by the model. Stage 1 tests
+the visible vertices only, as before: there the backs of the limbs along the
+edges of their silhouette, a pixel outside it, made the limb searches noisy
+(synthetic side-on jumps: 86 searches instead of 52, and a velocity error of
+the legs of 0.38 m/s instead of 0.28 after stage 1).
 
 Output `<out>.npz`: for every tracked frame its time (sensor clock), the
 root, the body joint rotations (a PoseSequence: bodyscan.dynamic.motions),
@@ -379,7 +383,7 @@ farther points are clutter no limb can reach, reported as
 limbs again), `free_space` (more than 3 % of the
 visible vertices where the sensor saw through; 5 % before version 1.4, which
 let a whole arm in empty space pass unflagged; the hidden limb vertices that
-the fit also tests since version 1.5 do not count here, since the back of
+stage 2 also tests since version 1.5 do not count here, since the back of
 every limb along the edge of its silhouette falls a pixel outside it),
 `below_floor` (a foot 2 cm
 below the floor), `sliding` (a standing foot moving faster than 0.3 m/s),

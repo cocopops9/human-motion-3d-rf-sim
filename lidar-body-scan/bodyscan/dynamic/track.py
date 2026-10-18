@@ -94,11 +94,6 @@ class TrackConfig:
                                          "points altogether never pays", choices=("wide", "bounded"),
                                  effect="bounded lets a limb the sensor sees as empty space stay there "
                                         "(arms stretched into the air, a twisted trunk)")
-    free_space_hidden: bool = param(True, "the free-space test also covers the limb vertices the body model hides "
-                                          "behind itself: a hidden limb placed where the sensor saw empty space (out "
-                                          "of the shadow of the trunk) is pulled back like a visible one; the "
-                                          "measured ranges tell what really hid it",
-                                    effect="false: only vertices the model shows the sensor are tested (version 1.4)")
     free_space_margin: float = param(0.06, "a vertex counts as in free space when the sensor saw this much "
                                            "beyond it", unit="m")
     limit_weight: float = param(5.0, "weight of the anatomical joint limits")
@@ -189,6 +184,13 @@ class RefineConfig:
                                "window: the last frames of a window see what comes after them",
                            effect="0: the end of each window is refined without the frames that follow (version "
                                   "1.4); larger: slower")
+    free_space_hidden: bool = param(True, "the free-space term also covers the limb vertices the body model hides "
+                                          "behind itself: a hidden limb placed where the sensor saw empty space (out "
+                                          "of the shadow of the trunk) is pulled back like a visible one; the "
+                                          "measured ranges tell what really hid it. Stage 2 only: in stage 1 the "
+                                          "backs of the limbs along the silhouette edges (a pixel out) made the "
+                                          "limb searches noisy",
+                                    effect="false: only vertices the model shows the sensor are tested (version 1.4)")
     rounds: int = param(2, "correspondence rounds per window")
     iterations: int = param(40, "L-BFGS iterations per round")
     smoothness: str = param("jerk", "what the smoothness term penalises: the jerk (change of acceleration) or "
@@ -545,7 +547,10 @@ class Tracker:
 
     # -- correspondences ------------------------------------------------------------------------
     def match(self, vertices: np.ndarray, normals: np.ndarray, frame: FrameData,
-              max_distance: float | None = None) -> FrameMatch:
+              max_distance: float | None = None, hidden: bool = False) -> FrameMatch:
+        """Correspondences of the points with the visible body, and the vertices in free space or in
+        front of the measured surface: of the visible vertices, and with 'hidden' of the limbs wherever
+        they are (stage 2, refine.free_space_hidden)."""
         import torch
         from bodyscan.dynamic.fitting import closest_points, visible_faces, visible_vertices
         c = self.config.tracking
@@ -554,10 +559,10 @@ class Tracker:
         faces = visible_faces(self.faces_np, visible)
         face_ids, bary, distance = closest_points(vertices, self.faces_np, frame.points_np, faces)
         valid = np.flatnonzero(distance < (c.max_correspondence if max_distance is None else max_distance))
-        # the free-space and in-front tests: the visible vertices, and with free_space_hidden the limbs
-        # wherever they are (behind the measured surface a vertex is neither free nor in front, so the
-        # measured ranges decide what hides it, not the model)
-        tested = visible | self.limb_vertices if c.free_space_hidden else visible
+        # the free-space and in-front tests: the visible vertices, and with 'hidden' the limbs wherever
+        # they are (behind the measured surface a vertex is neither free nor in front, so the measured
+        # ranges decide what hides it, not the model)
+        tested = visible | self.limb_vertices if hidden else visible
         index = np.flatnonzero(tested)
         rows, cols, ranges = g.project(vertices[index])
         unwrapped = g.column_distance_unwrapped(cols, frame.reference_column)
@@ -1369,7 +1374,7 @@ class Tracker:
                     trunk_normals = normals[:, self.collision.trunk]
                 vertices_np = vertices.cpu().numpy().astype(np.float64)
                 matches = [self.match(vertices_np[i], normals[i].cpu().numpy().astype(np.float64), data[k],
-                                      max(c.max_correspondence, 3.0 * scale))
+                                      max(c.max_correspondence, 3.0 * scale), hidden=r.free_space_hidden)
                            for i, k in enumerate(span)]
                 seen = np.stack([self.joint_seen(m.visible) for m in matches])          # (count, 22)
                 hidden_weight = 1.0 + r.hidden_smoothness * self.hidden_factor(seen)
@@ -1514,12 +1519,11 @@ class Tracker:
                 reach = self.config.tracking.max_correspondence
                 unexplained[k] = np.mean((distance > 0.05) & (distance < reach))
                 clutter[k] = np.mean(distance >= reach)
-                # of the vertices the model shows the sensor, as before version 1.5: the hidden limb vertices
-                # tested since (free_space_hidden) include the back of every limb along the edge of its
-                # silhouette, a pixel out by the discretisation (about 1 % of the visible count on the truth
-                # of synthetic takes), which would flag most frames
-                silhouette = match.silhouette.cpu().numpy()
-                violation[k] = np.count_nonzero(match.visible[silhouette]) / match.visible_count
+                # of the vertices the model shows the sensor (match without 'hidden'): the hidden limb vertices
+                # that stage 2 also tests include the back of every limb along the edge of its silhouette, a
+                # pixel out by the discretisation (about 1 % of the visible count on the truth of synthetic
+                # takes), which would flag most frames
+                violation[k] = len(match.silhouette) / match.visible_count
                 floor[k] = v[self.feet_np, 2].min()
                 arm_in_trunk[k] = self.collision.depth(v, normals[i].cpu().numpy().astype(np.float64))
                 # observed: visible vertices with a point of the person within 2 robust scales
