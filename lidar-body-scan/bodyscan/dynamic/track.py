@@ -100,6 +100,13 @@ class TrackConfig:
     twist_weight: float = param(0.05, "weight pulling the twist of the spine and the rotation of the hips about "
                                       "the legs towards zero [per rad^2]: the pelvis can turn and the trunk and "
                                       "legs turn back by as much, which the points hardly tell apart")
+    trunk_twist_weight: float = param(1.0, "weight pulling the twist of the chest against the pelvis (the sum of the "
+                                           "three spine joints' twists) towards zero [per rad^2]: seen side-on, the "
+                                           "points hardly tell it, and an arm swinging in front of the chest pulls it "
+                                           "round",
+                                      effect="0 (version 1.5): chests of the s02 side-on jumps twisted back and forth "
+                                             "by about 25 deg (p95) at up to 280 deg/s, and the guessed far arm, "
+                                             "hanging from the chest, swung with them")
     head_weight: float = param(0.15, "weight pulling the neck and head rotations towards upright and facing "
                                      "forward [per rad^2]: the head is round, its points hardly tell how it is "
                                      "turned or tilted",
@@ -162,16 +169,44 @@ class TrackConfig:
                                         "within 0.2 s at the first take-off and stays so)")
     facing_check: bool = param(True, "a frame still poorly explained after the searches, five frames in a row, is "
                                      "fitted again from the opposite facing and from the two side-on ones (at most "
-                                     "every ten frames); a fit that explains the points clearly better (3 mm) is kept, "
-                                     "even if it turns the body around",
+                                     "every ten frames); a fit that explains the points clearly better (3 mm) is kept "
+                                     "when the body can turn there physically: within max_turn_rate of the frames "
+                                     "before, or by a turn spread over them (connect_frames)",
                                effect="false: a body tracked facing the wrong way stays so")
+    connect_frames: int = param(30, "a better facing that the body cannot reach from the frames before at "
+                                    "max_turn_rate is kept only if the frames before, fitted again backwards from it "
+                                    "(at most this many), explain their points as well as before (connect_tolerance) "
+                                    "and meet the earlier track: the turn is then spread over them; otherwise it is "
+                                    "refused (0: refused always)",
+                              effect="version 1.5 kept such a facing at once: in 5 of the 27 s02 takes the body turned "
+                                     "by 50 to 177 deg between two frames (up to 3500 deg/s), in run01_3 it then ran "
+                                     "backwards")
+    connect_tolerance: float = param(0.003, "how much worse (score of explain(), about the mean point distance) a "
+                                            "frame fitted again backwards may explain its points than before", unit="m")
+    hinge_weight: float = param(20.0, "weight keeping the elbows and knees in their plane of flexion "
+                                      "(bodyscan.body.anatomy: out of plane at most 5 deg varus and 12 deg valgus at the "
+                                      "elbow, 6 deg at the knee) [per rad^2]",
+                                effect="0: elbows bent sideways at the edge of the joint box (20 deg) instead of the "
+                                       "upper arm turned (versions 1.3 to 1.5: elbows out of plane by more than 5 deg in "
+                                       "30 to 100 % of the frames of the s02 takes, knees by 8 deg in up to half the "
+                                       "frames of the side-on jumps)")
+    joint_speed_scale: float = param(1.0, "scale of the fastest rotation each joint may make between two frames "
+                                          "(bodyscan.body.anatomy.SPEED_LIMITS: 400 deg/s for each spine joint, 600 "
+                                          "for the collars, 1000 to 1500 for the limbs); a faster change is spread "
+                                          "over the frames around it. Raise it for throwing or kicking; 0: no limit",
+                                     effect="0 (version 1.5): single frames where a joint jumped by 30 to 110 deg and "
+                                            "back, in up to 3.6 % of the frames of the s02 takes")
     penetration_weight: float = param(2.0, "weight keeping the arms out of the trunk: a vertex of a forearm, a "
                                            "hand or the lower half of an upper arm deeper than penetration_margin "
-                                           "inside the trunk is pushed out (stage 1 and 2)",
+                                           "inside the trunk is pushed out (stage 1 and 2; summed over the vertices "
+                                           "inside, per ten of them)",
                                       effect="0: an arm the sensor does not see can sink into the trunk (version "
-                                             "1.4)")
-    penetration_margin: float = param(0.02, "depth of an arm inside the trunk that is not penalised (soft tissue, "
-                                            "clothes, an avatar slightly wider than the person)", unit="m")
+                                             "1.4); version 1.5 averaged over all the arm samples, so that a forearm "
+                                             "5 cm inside cost little (s02 takes: arms more than 2 cm inside in 15 to "
+                                             "50 % of the frames)")
+    penetration_margin: float = param(0.01, "depth of an arm inside the trunk that is not penalised (soft tissue, "
+                                            "clothes, an avatar slightly wider than the person)", unit="m",
+                                      effect="0.02 (version 1.5): arms visibly inside the trunk")
 
 
 @dataclass
@@ -222,7 +257,8 @@ class TrackPipelineConfig:
 # hanging, 90: horizontal at the side; swing: forward; twist 90: palm forward).
 ARM_STARTS = (
     (40, 0, 90, 10),        # A-pose
-    (10, 0, 90, 15),        # hanging
+    (10, 0, 0, 15),         # hanging relaxed: palm towards the thigh, forearm a little forward (version 1.5: palm
+                            # forward by the upper arm turned out 90 deg, so the elbow bent sideways)
     (10, 0, 90, 90),        # hanging, elbow bent
     (90, 0, 90, 10),        # horizontal at the side
     (15, 90, 0, 10),        # horizontal in front
@@ -276,6 +312,8 @@ def neutral_priors(body, config) -> object:
     """Soft priors of a body pose (torch, (..., 21, 3)) towards neutral where the points tell
     little: spine and hip twist, neck and head, forearm twist and wrists."""
     energy = config.twist_weight * (body[..., TWIST_JOINTS, 1] ** 2).sum()
+    if config.trunk_twist_weight > 0:
+        energy = energy + config.trunk_twist_weight * (body[..., TRUNK_JOINTS, 1].sum(-1) ** 2).sum()
     if config.head_weight > 0:
         energy = energy + config.head_weight * (body[..., HEAD_JOINTS, :] ** 2).sum()
     if config.forearm_twist_weight > 0:
@@ -305,11 +343,13 @@ def free_space_loss(distance, scale: float, kind: str):
 # partner: far wrist 51 mm with the arm anchored from half seen, 87 mm from a quarter).
 OBSERVED_LIMB = {"arm": 0.5, "leg": 0.2}
 
-# Turn of a guessed limb into the shadow of the body (Tracker.shadow_turns): the cost of changing it
-# by 8 deg between two frames (in units of the fraction of the limb in the sensor's sight), and the
-# time over which the chosen turns are smoothed [s].
-TURN_SWITCH_COST = 0.1
-TURN_SMOOTHING = 0.2
+# A guessed arm is moved out of the sensor's sight (Tracker.hide_guessed_limbs) where more than this
+# much of it is guessed, and the changes are smoothed over this time [s] (synthetic jog across the line
+# of sight: per frame alone, the far hand's velocity error rose from 1.04 to 1.49 m/s; smoothed over
+# 0.1 s 1.07, over 0.15 s 1.04, with the far wrist 104 mm from the truth instead of 120).
+HIDE_FROM = 0.3
+HIDE_SMOOTHING = 0.15
+
 
 # Facings closer than this are one candidate of the initialisation (Tracker.initialise).
 INIT_FACING_GAP = np.radians(45.0)
@@ -422,12 +462,20 @@ class TrunkCollision:
             return indices
         return indices[np.round(np.linspace(0, len(indices) - 1, count)).astype(int)]
 
+    # the energy counts the squared excess depth of the arm samples per this many of them: a forearm
+    # inside the trunk costs about as much whether few or many of its samples are (version 1.5 took the
+    # mean over all the samples of both arms, so a forearm 5 cm inside cost little)
+    PER_SAMPLES = 10
+
     def energy(self, vertices, trunk_normals, margin: float, scale: float = 0.02, chunk: int = 16):
-        """Sum over frames of the mean squared excess depth (in units of 'scale') of the arm samples
-        inside the trunk. vertices (F, V, 3) torch; trunk_normals (F, trunk samples, 3), detached."""
+        """Sum over frames of the squared excess depth (in units of 'scale') of the arm samples
+        inside the trunk, per PER_SAMPLES samples. vertices (F, V, 3) torch; trunk_normals (F, trunk
+        samples, 3), detached."""
+        return self.energy_of(vertices[:, self.arm], vertices[:, self.trunk], trunk_normals, margin, scale, chunk)
+
+    def energy_of(self, arm, trunk, trunk_normals, margin: float, scale: float = 0.02, chunk: int = 16):
+        """energy() from the arm samples (F, A, 3) and the trunk samples (F, T, 3) themselves."""
         import torch
-        arm = vertices[:, self.arm]
-        trunk = vertices[:, self.trunk]
         with torch.no_grad():
             nearest = torch.cat([torch.cdist(arm[i:i + chunk].detach(), trunk[i:i + chunk].detach())
                                  .topk(self.NEAREST, dim=-1, largest=False).indices
@@ -437,7 +485,7 @@ class TrunkCollision:
         normals = trunk_normals[frames, nearest]
         signed = ((arm[:, :, None] - points) * normals).sum(-1).max(dim=-1).values         # (F, A)
         excess = torch.relu(-signed - margin) / scale
-        return (excess ** 2).mean(dim=1).sum()
+        return (excess ** 2).sum() / self.PER_SAMPLES
 
     def depth(self, vertices: np.ndarray, normals: np.ndarray) -> float:
         """Deepest arm sample inside the trunk [m] (0 when none) of one posed body (numpy)."""
@@ -518,13 +566,6 @@ class Tracker:
         limb_parts = [skeleton.PART_NAMES.index(f"{side}_{part}") for side in ("left", "right")
                       for part in ("upper_arm", "forearm", "hand", "thigh", "shank", "foot")]
         self.limb_vertices = np.isin(labels, limb_parts)
-        # per coupled limb about 40 vertices of each of its parts (a hand has as many vertices as the
-        # rest of the arm), to tell whether a guessed limb lies in the shadow of the body
-        self.limb_samples = {}
-        for limb, parts in coupling.LIMB_PARTS.items():
-            picked = [TrunkCollision._spread(np.flatnonzero(labels == skeleton.PART_NAMES.index(part)), 40)
-                      for part in parts]
-            self.limb_samples[limb] = np.concatenate(picked)
         self.coupling_plan = None
 
     # -- posing ---------------------------------------------------------------------------------
@@ -686,6 +727,7 @@ class Tracker:
         joints) of the only joints that move (the root stays), for searches of one limb.
         Returns (rotation matrix, position, body, energy, match)."""
         import torch
+        from bodyscan.body.anatomy import hinge_penalty
         from bodyscan.body.model import vertex_normals
         from bodyscan.dynamic.fitting import limit_penalty
         c = self.config.tracking
@@ -733,6 +775,8 @@ class Tracker:
                 vertices, _ = self.pose(omega, reference_t, pos, b)
                 energy = self.frame_energy(vertices[0], frame, match, scale=scale)
                 energy = energy + c.limit_weight * limit_penalty(b)
+                if c.hinge_weight > 0:
+                    energy = energy + c.hinge_weight * hinge_penalty(b)
                 energy = energy + neutral_priors(b, c)
                 if c.penetration_weight > 0:
                     energy = energy + c.penetration_weight * self.collision.energy(vertices, trunk_normals,
@@ -956,8 +1000,8 @@ class Tracker:
         count = len(self.segmented)
         stop = count if stop is None else min(stop, count)
         rotations, positions, bodies, times, indices, energies, residuals = [], [], [], [], [], [], []
-        slots, restarts, observed = [], [], []
-        searched = refused = turned = 0
+        slots, restarts, observed, scores = [], [], [], []
+        searched = refused = turned = connected = facing_refused = 0
         poor_run, last_check, since = 0, -10 ** 9, 0
         prediction = None
         progress = Progress("tracked frames", stop - start)
@@ -1009,10 +1053,30 @@ class Tracker:
             if c.facing_check and rotations and poor_run >= 5 and k - last_check >= 10:
                 last_check = k
                 retry, retried = self.facing_retry(frame, result)
-                if retried["score"] < explained["score"] - 0.003:
-                    result, explained, restarted = retry, retried, True
-                    turned += 1
-                    poor_run = 0
+                if (retried["score"] < explained["score"] - 0.003
+                        and not self.runs_backwards(retry[0], positions, times, frame.time)):
+                    if self.plausible_turn(retry[0], frame.time, rotations[since:], times[since:]):
+                        result, explained = retry, retried
+                        turned += 1
+                        poor_run = 0
+                    else:
+                        # the body cannot turn so far since the frames before: either they were tracked
+                        # facing wrongly (then, fitted again backwards from the new facing, they explain their
+                        # points as well and the turn spreads over them) or the new facing is wrong
+                        refits = self.connect_turn(retry, frame.time, rotations, positions, bodies, times, slots,
+                                                   scores, since)
+                        if refits is None:
+                            facing_refused += 1
+                        else:
+                            for i, fitted, state in refits:
+                                rotations[i], positions[i], bodies[i], energies[i] = fitted[0], fitted[1], fitted[2], fitted[3]
+                                residuals[i] = float(np.median(state["distance"]))
+                                observed[i] = state["observed_parts"]
+                                scores[i] = state["score"]
+                            result, explained = retry, retried
+                            turned += 1
+                            connected += len(refits)
+                            poor_run = 0
             if restarted:
                 since = len(rotations)          # the turn limit counts from the frames after a new start
             rotation, position, body, energy, _ = result
@@ -1026,16 +1090,19 @@ class Tracker:
             energies.append(energy)
             residuals.append(float(np.median(explained["distance"])))
             observed.append(explained["observed_parts"])
+            scores.append(explained["score"])
             progress.maybe(k - start + 1, 25)
         root = np.array([matrix_to_axis_angle_np(r) for r in rotations])
         if searched:
             info(f"  limbs searched again in {searched} frames (points left unexplained by the fit)")
-        if refused or turned:
+        if refused or turned or facing_refused:
             info(f"  turns of the whole body refused in {refused} frames (faster than {c.max_turn_rate:g} deg/s); "
-                 f"facing changed after a poor fit in {turned} frames")
+                 f"facing changed after a poor fit in {turned} frames ({connected} frames before fitted again to "
+                 f"spread the turn), refused in {facing_refused} (no physical turn there)")
         return {"times": np.array(times), "frame_index": np.array(indices), "slot": np.array(slots, dtype=np.int64),
                 "restart": np.array(restarts, dtype=bool), "searches": searched, "turns_refused": refused,
-                "facing_changes": turned, "root_rotation": root,
+                "facing_changes": turned, "facing_refused": facing_refused, "turn_frames_refitted": connected,
+                "root_rotation": root,
                 "root_matrix": np.array(rotations), "root_position": np.array(positions), "body": np.array(bodies),
                 "energy": np.array(energies), "residual": np.array(residuals),
                 "observed": np.array(observed).reshape(len(times), len(skeleton.PART_NAMES))}
@@ -1059,6 +1126,57 @@ class Tracker:
             if abs(np.angle(np.exp(1j * (yaw - self.yaw(rotations[j]))))) > rate * max(elapsed, 0.0) + slack:
                 return False
         return True
+
+    def runs_backwards(self, rotation, positions, times, time: float) -> bool:
+        """Whether a body facing as 'rotation' at 'time' would be moving backwards: its pelvis moved over
+        the last half second faster than 0.6 m/s, in a direction more than 120 deg from that facing
+        (people walk and run forwards; a person seen side-on and tracked facing backwards does not)."""
+        recent = [i for i in range(max(len(times) - 20, 0), len(times)) if 0.0 < time - times[i] <= 0.5]
+        if len(recent) < 3:
+            return False
+        first, last = recent[0], recent[-1]
+        elapsed = times[last] - times[first]
+        if elapsed <= 0:
+            return False
+        velocity = (np.asarray(positions[last][:2]) - np.asarray(positions[first][:2])) / elapsed
+        speed = float(np.linalg.norm(velocity))
+        if speed < 0.6:
+            return False
+        facing = np.asarray(rotation)[:2, 0]
+        facing = facing / max(float(np.linalg.norm(facing)), 1e-9)
+        return float(facing @ velocity) / speed < np.cos(np.radians(120.0))
+
+    def connect_turn(self, candidate, time: float, rotations, positions, bodies, times, slots, scores, since: int):
+        """The frames before a facing the body cannot reach from them, fitted again backwards from it
+        (each from the one after it, with the continuity of stage 1 run backwards), as long as each
+        explains its points about as well as before (connect_tolerance), turns physically from the one
+        after it (max_turn_rate plus 20 deg) and has not yet met the earlier track (within 15 deg of its
+        facing): [(index, fit, explain()), ...] when it meets the earlier track within connect_frames,
+        None otherwise (the new facing is then refused)."""
+        c = self.config.tracking
+        if c.connect_frames <= 0:
+            return None
+        rate, slack, meet = np.radians(c.max_turn_rate), np.radians(20.0), np.radians(15.0)
+        chain = [(candidate[0], candidate[1], candidate[2], time)]          # the latest first
+        refits = []
+        last = max(len(rotations) - c.connect_frames, since, 0)
+        for i in range(len(rotations) - 1, last - 1, -1):
+            data = FrameData(self.segmented.load(int(slots[i])), self.geometry, self.device, self.dtype)
+            later = chain[-2:]                                               # in the order of time, reversed
+            prediction = self.predict([s[0] for s in later], [s[1] for s in later], [s[2] for s in later],
+                                      [s[3] for s in later], times[i])
+            fitted = self.fit_frame(data, prediction[0], prediction[1], prediction[2], prediction)
+            state = self.explain(fitted[0], fitted[1], fitted[2], data)
+            if state["score"] > scores[i] + c.connect_tolerance:
+                return None
+            step = abs(np.angle(np.exp(1j * (self.yaw(fitted[0]) - self.yaw(chain[-1][0])))))
+            if step > rate * max(chain[-1][3] - times[i], 0.0) + slack:
+                return None
+            refits.append((i, fitted, state))
+            if abs(np.angle(np.exp(1j * (self.yaw(fitted[0]) - self.yaw(rotations[i]))))) < meet:
+                return refits
+            chain.append((fitted[0], fitted[1], fitted[2], times[i]))
+        return None
 
     def facing_retry(self, frame: FrameData, result):
         """The frame fitted afresh from the opposite facing and the two side-on ones (the start pose,
@@ -1119,51 +1237,43 @@ class Tracker:
         return {"plan": plan, "observation": observation, "limbs": limbs}
 
     def start_hidden_limbs(self, result: dict, prepared: dict) -> int:
-        """With coupling.start_from_guess, the hidden limbs start stage 2 from the guess of
-        complete_hidden_limbs (not turned into the shadow): a far arm left where stage 1 put it (still,
-        in the trunk, out to the side) disturbs the refinement of the rest of the body (synthetic side-on
-        jumps: velocity error of the near hand 0.24 m/s with the guessed start, 0.34 without; probably
-        through the joint smoothness, which ties the far arm to the trunk). Returns the number of
-        limb-frames changed."""
+        """With coupling.start_from_guess, the hidden limbs start stage 2 from their guess (as
+        complete_hidden_limbs places them): a far arm left where stage 1 put it (still, in the trunk, out to
+        the side) disturbs the refinement of the rest of the body (synthetic side-on jumps: velocity error of
+        the near hand 0.24 m/s with the guessed start, 0.34 without; probably through the joint smoothness,
+        which ties the far arm to the trunk). Returns the number of limb-frames changed."""
         if not self.config.coupling.start_from_guess:
             return 0
-        changed = self.guess_hidden_limbs(result, prepared, turn=False)
+        changed = self.guess_hidden_limbs(result, prepared)
         result.pop("guessed", None)
         result.pop("guessed_limbs", None)
         return int(sum(changed.values()))
 
     def complete_hidden_limbs(self, result: dict, prepared: dict) -> dict:
-        """After stage 2, every limb the sensor does not see takes its partner's refined motion,
-        mirrored (coupling.limb_guesses: at the same time or half a cycle away), turned about the
-        vertical where the guess would lie in the sensor's sight (shadow_turns), plus the offset from
-        it observed where the limb did show: between two observations up to 3 s apart the offset
-        changes linearly (coupling.bridged_offsets), so the limb meets both and moves like its partner
-        in between; before the first and after the last, and in longer gaps, it fades over
-        offset_memory. Where the limb was observed (OBSERVED_LIMB of it seen with points) it keeps its
-        tracked pose; where the plan is unsure (weight under 0.5) the guess is blended in partly. (The
-        guess is applied after stage 2, not as a term of it: with no points on the limb, the energy of
-        a window is dominated by the data of the rest of the body and the optimiser hardly moves the
-        limb; a target turned by 20 deg changed the far wrist by 2 mm.) Returns {limb: frames
-        changed}."""
-        return self.guess_hidden_limbs(result, prepared, turn=True)
+        """After stage 2, every limb the sensor does not see takes its partner's refined motion, mirrored
+        relative to the trunk (coupling.joint_guesses: at the same time or half a cycle away), turned by the
+        rotation from it observed where the limb did show: between two observations up to 3 s apart that
+        rotation turns from the one to the other (coupling.carried_offsets), so the limb meets both and
+        moves like its partner in between; before the first and after the last, and in longer gaps, it fades
+        over offset_memory. Where the limb was observed (OBSERVED_LIMB of it seen with points) it keeps its
+        tracked pose; where the plan is unsure (weight under 0.5) the guess is blended in partly (spherical
+        interpolation). (The guess is applied after stage 2, not as a term of it: with no points on the
+        limb, the energy of a window is dominated by the data of the rest of the body and the optimiser
+        hardly moves the limb.) The joints are then kept anatomical and out of the trunk (finish_pose).
+        Returns {limb: frames changed}."""
+        return self.guess_hidden_limbs(result, prepared)
 
-    def guess_hidden_limbs(self, result: dict, prepared: dict, turn: bool) -> dict:
-        """The hidden limbs of 'result' replaced by their guess (complete_hidden_limbs; turned into the
-        shadow of the body when 'turn'), in place. Returns {limb: frames changed}."""
+    def guess_hidden_limbs(self, result: dict, prepared: dict) -> dict:
+        """The hidden limbs of 'result' replaced by their guess (complete_hidden_limbs), in place. Returns
+        {limb: frames changed}."""
+        from bodyscan.body.rotations import (axis_angle_to_quaternion_np, quaternion_conjugate_np,
+                                             quaternion_multiply_np, quaternion_to_axis_angle_np, slerp_np)
         k = self.config.coupling
-        times, root, positions = result["times"], result["root_matrix"], result["root_position"]
+        times = result["times"]
         tracked = result["body"]
         body = tracked.copy()
         plan, observation = prepared["plan"], prepared["observation"]
-        guesses = coupling.limb_guesses(times, root, tracked, plan, observation, prepared["limbs"])
-        lower, upper = skeleton.limit_arrays()
-        cache = {}
-
-        def frame(i):
-            if i not in cache:
-                cache[i] = FrameData(self.segmented.load(int(result["slot"][i])), self.geometry, self.device, self.dtype)
-            return cache[i]
-
+        guesses = coupling.joint_guesses(times, tracked, plan, observation, prepared["limbs"])
         changed = {}
         result["guessed_limbs"] = list(prepared["limbs"])
         result["guessed"] = np.zeros((len(times), len(prepared["limbs"])))
@@ -1172,110 +1282,273 @@ class Tracker:
             index = coupling.body_indices(limb)
             seen = observation[limb]
             # where the limb was observed (OBSERVED_LIMB of its full view seen with points: the points place
-            # it) it keeps its tracked pose: the guess plus the offset observed there; between observations
-            # the offset changes linearly, so the limb meets them on both sides and moves like its partner
-            # in between (in a short gap that is nearly the plain interpolation of the observations, in a
-            # long one the partner's swing). The blend follows the weight of the guess, which changes
-            # smoothly (coupling.estimate, limb_guesses); at an anchored frame the guess plus its offset is
-            # the tracked pose, so the limb stays continuous where the anchors start and end.
+            # it) it keeps its tracked pose: the guess turned by the rotation observed there; between
+            # observations that rotation turns from one to the next, so the limb meets them on both sides and
+            # moves like its partner in between. The blend follows the weight of the guess, which changes
+            # smoothly (coupling.estimate, joint_guesses); at an anchored frame the guess turned by its offset
+            # is the tracked pose, so the limb stays continuous where the anchors start and end.
             anchored = (seen >= OBSERVED_LIMB[limb.split("_")[1]]).astype(np.float64)
             blend = np.clip(2.0 * guess.weight, 0.0, 1.0) * (1.0 - anchored)
             result["guessed"][:, number] = blend * (1.0 - seen)
             if not np.any(blend > 0.05):
                 continue
-            offsets = tracked[:, index] - guess.local()
-            carried = coupling.bridged_offsets(times, offsets, anchored, k.offset_memory)
-            angle = None
-            if turn:
-                angle = self.shadow_turns(limb, guess, carried, blend, root, positions, tracked, frame)
-                offsets = tracked[:, index] - guess.local(angle)
-                carried = coupling.bridged_offsets(times, offsets, anchored, k.offset_memory)
-            guessed = np.clip(guess.local(angle) + carried, lower[skeleton.BODY][index], upper[skeleton.BODY][index])
-            body[:, index] = (1 - blend)[:, None, None] * tracked[:, index] + blend[:, None, None] * guessed
+            target = axis_angle_to_quaternion_np(guess.rotations)                 # (F, J, 4)
+            observed_pose = axis_angle_to_quaternion_np(tracked[:, index])
+            offsets = quaternion_multiply_np(quaternion_conjugate_np(target), observed_pose)
+            carried = coupling.carried_offsets(times, offsets, anchored, k.offset_memory)
+            guessed = quaternion_multiply_np(target, carried)
+            final = slerp_np(observed_pose, guessed, np.broadcast_to(blend[:, None], guessed.shape[:-1]))
+            body[:, index] = quaternion_to_axis_angle_np(final)
             changed[limb] = int(np.sum(blend > 0.05))
         result["body"] = body
         return changed
 
-    def shadow_turns(self, limb: str, guess, carried: np.ndarray, blend: np.ndarray, root_matrix: np.ndarray,
-                     positions: np.ndarray, body: np.ndarray, frame, batch: int = 48) -> np.ndarray:
-        """(F,) turn [rad] about the vertical of the guessed limb: the facing of a person seen
-        side-on is uncertain by 5 to 10 deg (the points of the side of a trunk hardly tell), and
-        mirroring at a midplane turned by that much turns the guess by twice as much, often out of
-        the shadow of the body. Of 0, +-8, +-16 ... +-shadow_turn deg (legs: half) the turn is kept
-        that puts the fewest of the limb's vertices where the sensor would have seen them (in_sight),
-        an arm not inside the trunk, a small turn preferred (an eighth of the limb in sight is worth
-        the largest turn), at the frames where the guess counts (blend over 0.3), along the path of
-        least cost over these frames with a cost for every change (steady_path: the turn changes only
-        where that keeps the limb out of sight for a while); then carried on linearly through the
-        other frames and smoothed over TURN_SMOOTHING, so that the guessed limb turns slowly (a hand
-        0.6 m from the shoulder moves 1 cm per degree). frame(i): the FrameData of frame i."""
+    # -- the last step: a human body -------------------------------------------------------------------
+    def finish_pose(self, result: dict) -> dict:
+        """The pose of every frame made that of a human body, in place, after the refinement and the
+        completion of the hidden limbs: a guessed arm moved out of the sensor's sight
+        (hide_guessed_limbs), no joint faster than a person's (anatomy.limit_speeds), the elbows and
+        knees moved into their range of flexion and out of plane (anatomy.project_hinges: their twist
+        kept; the penalty of stage 1 and 2 keeps them close, the completion may not), then the arms
+        pushed out of the trunk (push_arms_out). Returns the numbers of frames changed: {"hidden": limb
+        frames, "speeds": ..., "hinges": ..., "arms": ...}."""
+        from bodyscan.body.anatomy import hinge_excess, limit_speeds, project_hinges
+        hidden = self.hide_guessed_limbs(result) if self.config.coupling.hide_guessed_limbs else 0
+        body, fast = limit_speeds(result["times"], result["body"], self.config.tracking.joint_speed_scale)
+        excess = hinge_excess(body)
+        result["body"] = project_hinges(body)
+        pushed = self.push_arms_out(result)
+        return {"hidden": hidden, "speeds": int(fast.any(axis=1).sum()), "hinges": int(np.sum(excess > 0.5)),
+                "arms": pushed}
+
+    def _sight_energy(self, vertices, frame: FrameData, match: FrameMatch, members: np.ndarray):
+        """The free-space and in-front terms of frame_energy for the vertices 'members' of one limb only,
+        per vertex of the limb (vertices (V, 3) torch; match from match(..., hidden=True))."""
+        import torch
+        from bodyscan.dynamic.fitting import sample_map
+        c = self.config.tracking
+        g = self.geometry
+        count = max(len(members), 1)
+        energy = vertices.new_zeros(())
+        free = np.isin(match.silhouette.cpu().numpy(), members)
+        front = np.isin(match.front.cpu().numpy(), members)
+        if free.any():
+            keep = torch.as_tensor(free, device=self.device)
+            index = match.silhouette[keep]
+            pixels = (match.silhouette_pixels[0][keep], match.silhouette_pixels[1][keep])
+            rows, cols, ranges = g.project_torch(vertices[index], self.tables, frame.reference_column, pixels)
+            r0, c0 = frame.crop_origin
+            h, w = frame.mask.shape
+            rr, cc = rows - r0, cols - c0
+            out_r = torch.relu(-rr) + torch.relu(rr - (h - 1))
+            out_c = torch.relu(-cc) + torch.relu(cc - (w - 1))
+            angle = sample_map(frame.distance, rr, cc) + torch.sqrt((out_r * g.vertical_step) ** 2
+                                                                    + (out_c * g.column_step) ** 2 + 1e-12)
+            scale = c.silhouette_scale
+            energy = energy + free_space_loss(angle * ranges, scale, c.free_space_loss).sum() / scale ** 2 / count
+        if front.any():
+            keep = torch.as_tensor(front, device=self.device)
+            index = match.front[keep]
+            pixels = (match.front_pixels[0][keep], match.front_pixels[1][keep])
+            _, _, ranges = g.project_torch(vertices[index], self.tables, frame.reference_column, pixels)
+            excess = torch.relu(match.front_range[keep] - ranges - c.free_space_margin)
+            energy = energy + (free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
+                               / c.robust_scale ** 2 / count)
+        return energy
+
+    def hide_guessed_limbs(self, result: dict, rounds: int = 2, batch: int = 16) -> int:
+        """Guessed arms out of the sensor's sight, in place. The guess of a hidden arm (its partner,
+        mirrored) can stand where the sensor saw something else: empty space beyond it, or a surface
+        behind it; there the arm cannot be. In every frame where more than HIDE_FROM of the arm is
+        guessed, its shoulder and elbow are turned by the least that takes it out of the sensor's sight
+        (a short optimisation of the frame: the free-space and in-front terms of the arm's vertices
+        against the change of the two joints, with the joint limits, the hinges and the trunk kept); the
+        changes are smoothed over HIDE_SMOOTHING, so that the arm does not shake from one frame to the
+        next, and the whole is done 'rounds' times (the second round takes what the smoothing left).
+        Version 1.5 turned the guess about the vertical for this, which pulled the far arm out to the
+        side. Legs are left as guessed: moving a hip or a knee would move a foot standing on the floor.
+        Returns the number of arm-frames changed."""
         import torch
         from scipy.ndimage import gaussian_filter1d
-        k_c = self.config.coupling
-        count = len(blend)
-        largest = k_c.shadow_turn if limb.endswith("arm") else 0.5 * k_c.shadow_turn
-        steps = int(largest // 8.0)
-        candidates = np.flatnonzero(blend > 0.3)
-        if steps <= 0 or len(candidates) == 0:
-            return np.zeros(count)
-        angles = np.radians(8.0 * np.concatenate([[0], np.ravel([[-n, n] for n in range(1, steps + 1)])]))
-        samples = self.limb_samples[limb]
-        index = coupling.body_indices(limb)
-        arm_samples = self.collision.arm_of[limb.split("_")[0]] if limb.endswith("arm") else None
-        margin = self.config.tracking.penetration_margin
-        cost = np.zeros((len(candidates), len(angles)))
+        from bodyscan.body.anatomy import hinge_penalty, project_hinges
+        from bodyscan.body.model import vertex_normals
+        from bodyscan.dynamic.fitting import limit_penalty
+        limbs = list(result.get("guessed_limbs", []))
+        guessed = result.get("guessed")
+        if not limbs or guessed is None:
+            return 0
+        c = self.config.tracking
+        dev, dt = self.device, self.dtype
+        sigma = max(HIDE_SMOOTHING / self.frame_period, 0.5)
+        plan = []
+        for number, limb in enumerate(limbs):
+            side, kind = limb.split("_")
+            frames = np.flatnonzero(guessed[:, number] > HIDE_FROM)
+            if kind != "arm" or len(frames) == 0:
+                continue
+            joints = [skeleton.JOINT[f"{side}_{name}"] - 1 for name in ("shoulder", "elbow")]
+            parts = [skeleton.PART_NAMES.index(part) for part in coupling.LIMB_PARTS[limb]]
+            plan.append((number, joints, np.flatnonzero(np.isin(self.part_labels, parts)), frames))
+        if not plan:
+            return 0
+        changed = np.zeros((len(result["times"]), len(limbs)), dtype=bool)
+        for _ in range(max(rounds, 1)):
+            body = result["body"]
+            change = np.zeros_like(body)
+            for number, joints, members, frames in plan:
+                for first in range(0, len(frames), batch):
+                    chunk = frames[first:first + batch]
+                    data = [FrameData(self.segmented.load(int(result["slot"][i])), self.geometry, dev, dt)
+                            for i in chunk]
+                    zero = torch.zeros(len(chunk), 3, dtype=dt, device=dev)
+                    root = torch.as_tensor(result["root_matrix"][chunk], dtype=dt, device=dev)
+                    position = torch.as_tensor(result["root_position"][chunk], dtype=dt, device=dev)
+                    start = torch.as_tensor(body[chunk], dtype=dt, device=dev)
+                    with torch.no_grad():
+                        vertices, _ = self.pose(zero, root, position, start)
+                        normals = vertex_normals(vertices, self.faces)
+                        trunk_normals = normals[:, self.collision.trunk]
+                    vertices_np = vertices.cpu().numpy().astype(np.float64)
+                    normals_np = normals.cpu().numpy().astype(np.float64)
+                    matches = [self.match(vertices_np[k], normals_np[k], data[k], hidden=True) for k in range(len(chunk))]
+                    with torch.no_grad():
+                        active = [k for k in range(len(chunk))
+                                  if float(self._sight_energy(vertices[k], data[k], matches[k], members)) > 1e-6]
+                    if not active:
+                        continue
+                    delta = torch.zeros(len(chunk), len(joints), 3, dtype=dt, device=dev, requires_grad=True)
+                    optimizer = torch.optim.LBFGS([delta], lr=1.0, max_iter=25, history_size=10,
+                                                  line_search_fn="strong_wolfe")
 
-        def tensor(values):
-            return torch.as_tensor(values, dtype=self.dtype, device=self.device)
+                    def closure():
+                        optimizer.zero_grad()
+                        moved = start.clone()
+                        moved[:, joints] = start[:, joints] + delta
+                        posed, _ = self.pose(zero, root, position, moved)
+                        energy = sum(self._sight_energy(posed[k], data[k], matches[k], members) for k in active)
+                        energy = energy + 0.5 * (delta ** 2).sum()
+                        energy = energy + c.limit_weight * limit_penalty(moved) + c.hinge_weight * hinge_penalty(moved)
+                        if c.penetration_weight > 0:
+                            energy = energy + c.penetration_weight * self.collision.energy(posed, trunk_normals,
+                                                                                           c.penetration_margin)
+                        energy.backward()
+                        return energy
 
-        for first in range(0, len(candidates), batch):
-            chunk = candidates[first:first + batch]
-            zero = torch.zeros(len(chunk), 3, dtype=self.dtype, device=self.device)
-            trunk = trunk_normals = None
-            if arm_samples is not None:
-                from bodyscan.body.model import vertex_normals
-                with torch.no_grad():
-                    full, _ = self.pose(zero, tensor(root_matrix[chunk]), tensor(positions[chunk]), tensor(body[chunk]))
-                    normals = vertex_normals(full, self.faces)
-                trunk = full[:, self.collision.trunk].cpu().numpy().astype(np.float64)
-                trunk_normals = normals[:, self.collision.trunk].cpu().numpy().astype(np.float64)
-            for a, angle in enumerate(angles):
-                trial = body[chunk].copy()
-                trial[:, index] = guess.local(np.full(count, angle))[chunk] + carried[chunk]
-                with torch.no_grad():
-                    vertices, _ = self.pose(zero, tensor(root_matrix[chunk]), tensor(positions[chunk]), tensor(trial),
-                                            subset=samples if arm_samples is None
-                                            else np.concatenate([samples, arm_samples]))
-                vertices = vertices.cpu().numpy().astype(np.float64)
-                for i, f in enumerate(chunk):
-                    cost[first + i, a] = self.in_sight(vertices[i, :len(samples)], frame(f)).mean()
-                    if arm_samples is not None:
-                        depth = TrunkCollision.depth_of(vertices[i, len(samples):], trunk[i], trunk_normals[i])
-                        cost[first + i, a] += max(depth - margin, 0.0) / 0.02
-        cost += 0.125 * np.abs(angles)[None] / max(angles.max(), 1e-9)
-        chosen = angles[self.steady_path(cost, angles, TURN_SWITCH_COST)]
-        # carried on through the other frames (observed ones too: their offset is taken against the
-        # turned guess, so the limb stays continuous), then smoothed
-        turn = np.interp(np.arange(count), candidates, chosen)
-        return gaussian_filter1d(turn, max(TURN_SMOOTHING / self.frame_period, 0.5), mode="nearest")
+                    optimizer.step(closure)
+                    found = delta.detach().cpu().numpy()
+                    for k in active:
+                        change[chunk[k], joints] = found[k]
+            # smoothed over HIDE_SMOOTHING, and faded out where the arm is guessed less
+            weight = np.zeros(body.shape[:2])
+            for number, joints, members, frames in plan:
+                weight[:, joints] = np.clip(guessed[:, number] / HIDE_FROM, 0.0, 1.0)[:, None]
+            change = gaussian_filter1d(change, sigma, axis=0, mode="nearest") * weight[..., None]
+            if np.abs(change).max() < 1e-6:
+                break
+            result["body"] = project_hinges(body + change)
+            for number, joints, members, frames in plan:
+                changed[:, number] |= np.abs(change[:, joints]).max(axis=(1, 2)) > np.radians(0.5)
+        return int(changed.sum())
 
-    @staticmethod
-    def steady_path(cost: np.ndarray, angles: np.ndarray, switch: float) -> np.ndarray:
-        """Indices (N,) into 'angles' of the path through cost (N, len(angles)) of least total cost
-        plus 'switch' for every 8 deg of change between neighbours (Viterbi)."""
-        steps = np.abs(angles[:, None] - angles[None, :]) / np.radians(8.0) * switch    # (from, to)
-        total = cost[0].copy()
-        back = np.zeros(cost.shape, dtype=np.int64)
-        columns = np.arange(len(angles))
-        for i in range(1, len(cost)):
-            options = total[:, None] + steps
-            back[i] = np.argmin(options, axis=0)
-            total = options[back[i], columns] + cost[i]
-        path = np.zeros(len(cost), dtype=np.int64)
-        path[-1] = int(np.argmin(total))
-        for i in range(len(cost) - 1, 0, -1):
-            path[i - 1] = back[i, path[i]]
-        return path
+    def arm_depths(self, result: dict, batch: int = 32) -> np.ndarray:
+        """(F, 2) the deepest sample of the left and the right arm inside the trunk [m] (0 when none)."""
+        import torch
+        from bodyscan.body.model import vertex_normals
+        frames = len(result["times"])
+        depth = np.zeros((frames, 2))
+        for first in range(0, frames, batch):
+            span = np.arange(first, min(first + batch, frames))
+            with torch.no_grad():
+                zero = torch.zeros(len(span), 3, dtype=self.dtype, device=self.device)
+                vertices, _ = self.pose(zero, torch.as_tensor(result["root_matrix"][span], dtype=self.dtype,
+                                                              device=self.device),
+                                        torch.as_tensor(result["root_position"][span], dtype=self.dtype,
+                                                        device=self.device),
+                                        torch.as_tensor(result["body"][span], dtype=self.dtype, device=self.device))
+                normals = vertex_normals(vertices, self.faces)
+            v = vertices.cpu().numpy().astype(np.float64)
+            n = normals.cpu().numpy().astype(np.float64)
+            for i, k in enumerate(span):
+                trunk, trunk_normals = v[i, self.collision.trunk], n[i, self.collision.trunk]
+                for side, name in enumerate(("left", "right")):
+                    depth[k, side] = TrunkCollision.depth_of(v[i, self.collision.arm_of[name]], trunk, trunk_normals)
+        return depth
+
+    def push_arms_out(self, result: dict, rounds: int = 2) -> int:
+        """Arms out of the trunk, in place: in every frame where an arm reaches deeper into the trunk than
+        penetration_margin (plus 2 mm), its shoulder and elbow are turned by the least that brings it out
+        (a short optimisation of the frame: the excess depth against the change of the two joints, the
+        joint limits kept; the trunk does not move), then the changes are spread over the neighbouring
+        frames (each frame keeps the larger of its own change and the smoothed one), so that the arm does
+        not jump; a second round takes what is left (an arm 9 cm inside came out to 1 to 2 cm in one
+        round). Returns the number of frames changed."""
+        changed = np.zeros(len(result["times"]), dtype=bool)
+        for _ in range(max(rounds, 1)):
+            moved = self._push_arms_out_once(result)
+            if not moved.any():
+                break
+            changed |= moved
+        return int(changed.sum())
+
+    def _push_arms_out_once(self, result: dict, batch: int = 24) -> np.ndarray:
+        """One round of push_arms_out: (F,) the frames changed."""
+        import torch
+        from bodyscan.body.anatomy import hinge_penalty, project_hinges
+        from bodyscan.body.model import vertex_normals
+        from bodyscan.dynamic.fitting import limit_penalty
+        from scipy.ndimage import gaussian_filter1d
+        c = self.config.tracking
+        frames = len(result["times"])
+        if c.penetration_weight <= 0:
+            return np.zeros(frames, dtype=bool)
+        depth = self.arm_depths(result)
+        bad = np.flatnonzero(depth.max(axis=1) > c.penetration_margin + 0.002)
+        if len(bad) == 0:
+            return np.zeros(frames, dtype=bool)
+        dev, dt = self.device, self.dtype
+        body = result["body"]
+        joints = [skeleton.JOINT[f"{side}_{name}"] - 1 for side in ("left", "right") for name in ("shoulder", "elbow")]
+        change = np.zeros((len(body), len(joints), 3))
+        arm_samples = self.collision.arm
+        for first in range(0, len(bad), batch):
+            chunk = bad[first:first + batch]
+            zero = torch.zeros(len(chunk), 3, dtype=dt, device=dev)
+            root = torch.as_tensor(result["root_matrix"][chunk], dtype=dt, device=dev)
+            position = torch.as_tensor(result["root_position"][chunk], dtype=dt, device=dev)
+            start = torch.as_tensor(body[chunk], dtype=dt, device=dev)
+            with torch.no_grad():
+                vertices, _ = self.pose(zero, root, position, start)
+                normals = vertex_normals(vertices, self.faces)
+                trunk = vertices[:, self.collision.trunk]
+                trunk_normals = normals[:, self.collision.trunk]
+            delta = torch.zeros(len(chunk), len(joints), 3, dtype=dt, device=dev, requires_grad=True)
+            optimizer = torch.optim.LBFGS([delta], lr=1.0, max_iter=40, history_size=10, line_search_fn="strong_wolfe")
+
+            def total():
+                moved = start.clone()
+                moved[:, joints] = start[:, joints] + delta
+                arm, _ = self.pose(zero, root, position, moved, subset=arm_samples)
+                energy = self.collision.energy_of(arm, trunk, trunk_normals, c.penetration_margin)
+                energy = energy + 2.0 * (delta ** 2).sum()
+                energy = energy + c.limit_weight * limit_penalty(moved) + c.hinge_weight * hinge_penalty(moved)
+                return energy
+
+            def closure():
+                optimizer.zero_grad()
+                energy = total()
+                energy.backward()
+                return energy
+
+            optimizer.step(closure)
+            change[chunk] = delta.detach().cpu().numpy()
+        # spread over the neighbouring frames: each frame keeps the larger of its own change and the smoothed one
+        smooth = gaussian_filter1d(change, 1.5, axis=0, mode="nearest")
+        own, spread = np.linalg.norm(change, axis=2), np.linalg.norm(smooth, axis=2)
+        change = np.where((own >= spread)[..., None], change, smooth)
+        moved = body.copy()
+        moved[:, joints] = body[:, joints] + change
+        result["body"] = project_hinges(moved)
+        return np.linalg.norm(change, axis=(1, 2)) > 1e-3
 
     # -- stage 2 ----------------------------------------------------------------------------------
     def contacts(self, result: dict) -> np.ndarray:
@@ -1321,6 +1594,7 @@ class Tracker:
         import torch
         from bodyscan.body.model import vertex_normals
         from bodyscan.body.rotations import axis_angle_to_matrix, matrix_to_axis_angle_np
+        from bodyscan.body.anatomy import hinge_penalty
         from bodyscan.dynamic.fitting import charbonnier, geman_mcclure, limit_penalty, surface_points
         r = self.config.refine
         c = self.config.tracking
@@ -1423,6 +1697,8 @@ class Tracker:
                                                           + s["front"][:, None] * step[match.front])
                         energy = energy + self.frame_energy(vertices[i], data[k], match, scale=scale, **moved)
                     energy = energy / count + c.limit_weight * limit_penalty(bb) / count
+                    if c.hinge_weight > 0:
+                        energy = energy + c.hinge_weight * hinge_penalty(bb) / count
                     energy = energy + neutral_priors(bb, c) / count
                     dt1 = (t_span[1:] - t_span[:-1]).clamp_min(1e-4)
                     if c.penetration_weight > 0:
@@ -1493,9 +1769,11 @@ class Tracker:
         floor = np.zeros(frames)
         arm_in_trunk = np.zeros(frames)
         joints_out = np.zeros((frames, skeleton.NUM_JOINTS, 3), dtype=np.float32)
+        from bodyscan.body.anatomy import hinge_excess
         lower, upper = skeleton.limit_arrays()
         excess = np.degrees(np.maximum(lower[skeleton.BODY] - result["body"], 0)
                             + np.maximum(result["body"] - upper[skeleton.BODY], 0)).max(axis=(1, 2))
+        excess = np.maximum(excess, hinge_excess(result["body"]))           # elbows and knees out of their plane
         batch = 32
         for first in range(0, frames, batch):
             span = np.arange(first, min(first + batch, frames))
@@ -1670,14 +1948,23 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
             if completed:
                 info("  hidden limbs completed from their partner: "
                      + ", ".join(f"{limb.replace('_', ' ')} {count} frames" for limb, count in completed.items()))
-        contacts = tracker.contacts(result)
+    info("making every pose that of a human body")
+    finished = tracker.finish_pose(result)
+    info(f"  guessed arms moved out of the sensor's sight in {finished['hidden']} arm-frames, joints slowed to a "
+         f"person's speed in {finished['speeds']} frames, elbows and knees put back into their plane in "
+         f"{finished['hinges']}, arms pushed out of the trunk in {finished['arms']}")
+    contacts = tracker.contacts(result)
     quality = tracker.assess(result)
     flags = flag_frames(quality, contacts, result["times"])
     out = Path(out)
     if out.suffix != ".npz":
         out = out.with_suffix(".npz")
     extra = {"limb_searches": int(result.get("searches", 0)), "restarts": int(np.sum(result.get("restart", []))),
-             "turns_refused": int(result.get("turns_refused", 0)), "facing_changes": int(result.get("facing_changes", 0))}
+             "turns_refused": int(result.get("turns_refused", 0)), "facing_changes": int(result.get("facing_changes", 0)),
+             "facing_refused": int(result.get("facing_refused", 0)),
+             "turn_frames_refitted": int(result.get("turn_frames_refitted", 0)),
+             "guessed_arms_hidden": finished["hidden"], "joint_speeds_limited": finished["speeds"],
+             "hinges_projected": finished["hinges"], "arms_pushed_out": finished["arms"]}
     if prepared is not None:
         extra["coupling"] = prepared["plan"].summary()
         result["coupling_mode"] = prepared["plan"].mode

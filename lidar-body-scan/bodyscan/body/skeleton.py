@@ -13,6 +13,7 @@ rotation about x, y or z has the same meaning for every joint:
     left arm down to the side                     -z      right arm down    +z
     left arm forward                              -y      right arm forward +y
     left elbow bend (palm-down T-pose)            -y      right elbow bend  +y
+    left wrist bend towards the palm              -z      right             +z
     left hip abduction (thigh outwards)           +z      right             -z
 
 These follow from rotating the rest direction of each bone (thigh -y, foot
@@ -96,8 +97,8 @@ LIMITS_DEG = {
     17: ((-110, 110), (-70, 170), (-95, 115)),  # right shoulder: forward +y, down +z
     18: ((-100, 100), (-160, 6), (-20, 20)),    # left elbow: bends -y only (twist on x)
     19: ((-100, 100), (-6, 160), (-20, 20)),    # right elbow: bends +y only
-    20: ((-100, 100), (-80, 80), (-50, 50)),    # left wrist
-    21: ((-100, 100), (-80, 80), (-50, 50)),    # right wrist
+    20: ((-40, 40), (-35, 35), (-80, 80)),      # left wrist: twist x (the forearm turns the hand), sideways y,
+    21: ((-40, 40), (-35, 35), (-80, 80)),      # flexion z (palm down in the T-pose: bending the hand down is z)
 }
 
 

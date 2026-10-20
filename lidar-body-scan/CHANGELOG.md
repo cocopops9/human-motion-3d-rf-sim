@@ -1,5 +1,136 @@
 # Changelog
 
+## 1.6.0: a human body: hinges, physical turns and speeds, a steady chest, the hidden arm mirrored at the chest and kept out of sight (2026-10-20)
+
+The review videos of the 27 s02 takes tracked with 1.5.0 were better than
+with 1.4.1 while the person was side-on, but not natural: unseen parts
+contorted, elbows and knees bent sideways, arms a little inside the trunk,
+the far arm stiff and not following the near one (s02_jump02: "a crazy
+worm"), and the body turning faster than a person can. Measured on the
+1.5.0 motion files (no point clouds needed):
+
+- elbows bent out of their plane of flexion beyond what an elbow allows
+  (5 deg towards the body, 12 deg away from it) in 53 to 100 % of the frames
+  of every take (an arm hanging with the palm forward was the upper arm
+  turned out by 75 to 90 deg and the elbow bent sideways by 20 deg, the edge
+  of its box limit); knees by more than 6 deg in up to 38 % of the frames
+  (the side-on jumps);
+- in 5 takes the body turned by 50 to 177 deg from one frame to the next (up
+  to 3500 deg/s), all from the facing check of 1.5.0; in s02_run01_3 it then
+  ran backwards;
+- the chest twisted against the pelvis by 23 to 28 deg (p95) at up to
+  280 deg/s in the side-on jumps;
+- the far arm of the side-on jumps, mirrored in the frame of the pelvis'
+  facing, did not mirror the near one relative to the chest: the far wrist
+  6 to 14 cm (median) from the mirror of the near one; the guess was blended
+  by adding rotation vectors;
+- arms more than 2 cm inside the trunk in 14 to 51 % of the frames of the
+  moving takes, up to 12 cm;
+- single frames where a joint jumped by 30 to 110 deg and back (faster than
+  any joint of a person in these motions: the far collar of the side-on
+  jumps, the arms after the data gap of natural01_3), in up to 3.6 % of the
+  frames.
+
+Changes to `track` (each can be switched back with its option):
+
+- Hinges (new module bodyscan.body.anatomy): elbows and knees bend in one
+  plane. The forearm stays within 5 deg of the elbow's plane of flexion
+  towards the body and 12 deg away from it (the carrying angle), the shank
+  within 6 deg of the knee's; flexion -5 to 150 deg (elbow), -8 to 155 deg
+  (knee). A penalty in stage 1 and 2 (`--hinge-weight` 20) and a projection
+  of the final pose (the bone's direction clamped, its twist kept). The
+  hanging start of the arms has the palm towards the thigh, not forward by
+  the upper arm turned out.
+- Wrist limits as a wrist: bending towards the palm and back ±80 deg,
+  sideways ±35 deg, twist ±40 deg (the forearm turns the hand); the box had
+  bending and sideways swapped.
+- Turns as a body turns: a facing found by the facing check that the body
+  cannot reach from the second before at `--max-turn-rate` is kept only if
+  the frames before, fitted again backwards from it, explain their points as
+  well (`--connect-tolerance` 3 mm) and meet the earlier track within
+  `--connect-frames` (30): the turn is then spread over them; otherwise it is
+  refused. A facing that would make the body move backwards (pelvis faster
+  than 0.6 m/s, more than 120 deg from the facing) is refused.
+- The twist of the chest against the pelvis (the sum of the three spine
+  joints' twists) is held (`--trunk-twist-weight` 1).
+- Hidden limbs: the partner's joint rotations, each relative to its parent,
+  mirrored: the guessed arm hangs from the chest as its partner does. Version
+  1.5 rejected this because a chest tracked 10 deg twisted put the far wrist
+  10 cm off; with the chest held, the mirror at the chest is right, while the
+  mirror in the frame of the pelvis doubled every twist of the chest. Offsets
+  and blends are combined as rotations (quaternion products, spherical
+  interpolation). No turn about the vertical any more (`--shadow-turn`
+  removed).
+- The last step, after the completion of the hidden limbs
+  (`Tracker.finish_pose`):
+  - a guessed arm standing where the sensor saw something else (empty space
+    beyond it, a surface behind it) is moved out of its sight by the least
+    turn of its shoulder and elbow, smoothed over 0.15 s, twice
+    (`--hide-guessed-limbs`);
+  - no joint turns faster than a person's (bodyscan.body.anatomy.SPEED_LIMITS:
+    400 deg/s for each spine joint, 500 for the neck and the head, 600 for the
+    collars, 1000 to 1500 for the limbs; `--joint-speed-scale` 1, 0 for none):
+    a faster change between two frames is spread over the frames around it,
+    as many as the joint needs; a joint that jumped for one frame and came
+    back takes the mean of its neighbours;
+  - the hinges are projected;
+  - every arm still deeper than the margin inside the trunk is pushed out by
+    the least turn of its shoulder and elbow, spread over the neighbouring
+    frames.
+- Arms out of the trunk in stage 1 and 2: `--penetration-margin` 1 cm
+  (2 cm), the squared excess depths summed per ten arm samples (averaged over
+  all of them, so that a forearm 5 cm inside cost little).
+- New summary fields: facing_refused, turn_frames_refitted,
+  guessed_arms_hidden, joint_speeds_limited, hinges_projected,
+  arms_pushed_out. The `joint_limits` flag includes the hinges.
+
+On the synthetic bench (test body, 1024 x 20, default settings), the whole
+pipeline of 1.5.0 as released and of 1.6.0 on the same takes (one noise
+realisation each; joint error, body-part velocity error, error of the far
+wrist and elbow, velocity error of the far hand):
+
+| Motion | Joint error | Body-part velocity error | Far wrist | Far elbow | Far hand velocity |
+|---|---|---|---|---|---|
+| jumps side-on, 2.3 m | 20.6 then 21.6 mm | 0.305 then 0.256 m/s | 77 then 78 mm | 55 then 72 mm | 0.93 then 0.70 m/s |
+| jog across, 2.4 m | 19.1 then 16.2 mm | 0.310 then 0.289 m/s | 139 then 104 mm | 38 then 43 mm | 1.13 then 1.04 m/s |
+| walk across, 2.4 m | 11.2 then 11.0 mm | 0.099 then 0.099 m/s | 28 then 33 mm | 25 then 23 mm | 0.22 then 0.24 m/s |
+| jumps facing the sensor | 10.6 then 10.0 mm | 0.130 then 0.124 m/s | 14 then 12 mm | 15 then 14 mm | 0.21 then 0.18 m/s |
+| jog towards the sensor | 16.0 then 16.0 mm | 0.693 then 0.615 m/s | 67 then 77 mm | 36 then 35 mm | 2.01 then 1.80 m/s |
+
+The body is the more human one: elbows out of their plane in 27 to 61 % of
+the frames with 1.5.0, never with 1.6.0; knees in up to 16 %, never; the
+chest twisted against the pelvis by 16 deg (p95) in the side-on jumps, whose
+true chest does not twist at all, 1 deg with 1.6.0; arms in the trunk up to
+29 mm (jog towards the sensor), 12 mm; the guessed arm in free space as
+often as with 1.5.0 or less (except the side-on jumps: visible body in free
+space 2.0 then 2.3 %). Worse: the far elbow of the side-on jumps (55 then
+72 mm) and the far wrist of the walk (28 then 33 mm); the chest is now
+stiffer than a real one in a walk or a jog (synthetic truth: 5 deg of twist,
+p95; 1.6.0 tracks 0.7 to 1.5 deg, 1.5.0 7 to 12 deg).
+
+On the hidden arms of the side-on jumps, the steps one by one (same stage 1
+and 2): the plain mirror at the chest 22.7 mm, far wrist 94 mm, far elbow
+80 mm, far hand velocity 0.76 m/s, visible body in free space 3.4 %; then
+out of the sensor's sight 21.6 mm, 78 mm, 72 mm, 0.70 m/s, 2.3 %. The speed
+limits changed no frame of these takes but two of the jog towards the
+sensor, where they took the body-part velocity error from 0.666 to
+0.615 m/s.
+
+Tried and not kept:
+- swing-twist cones for the shoulders: the twist of a swing-twist
+  decomposition depends on the path (an arm swung forward and up has a twist
+  of minus the swing), so a cone on it refuses ordinary poses;
+- moving a guessed arm out of the sensor's sight frame by frame without
+  smoothing: the far hand's velocity error of the jog went from 1.04 to
+  1.49 m/s (0.1 s of smoothing: 1.07; 0.15 s: 1.04);
+- the push of the arms out of the trunk with a change weight of 10: an arm
+  put 9 cm inside came out to 4.3 cm; with 2 and a second round to 1.0 to
+  1.2 cm.
+
+Not validated yet: everything on real recordings (re-run the s02 takes and
+send back the motion files: the anatomy, turns, speeds and arm depths are
+measured from them); more than one noise realisation of the synthetic takes.
+
 ## 1.5.0: hidden limbs guessed from their partner; arms out of the trunk; the facing guarded (2026-10-18)
 
 The review videos of the 27 s02 takes tracked with 1.4.1 were good while the

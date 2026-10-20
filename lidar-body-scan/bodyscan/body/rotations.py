@@ -105,6 +105,25 @@ def matrix_to_axis_angle_np(matrix: np.ndarray) -> np.ndarray:
     return quaternion_to_axis_angle_np(matrix_to_quaternion_np(matrix))
 
 
+def quaternion_multiply_np(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Hamilton products a * b of quaternions (..., 4) (w, x, y, z): the rotation b, then a."""
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
+    return np.stack([aw * bw - ax * bx - ay * by - az * bz,
+                     aw * bx + ax * bw + ay * bz - az * by,
+                     aw * by - ax * bz + ay * bw + az * bx,
+                     aw * bz + ax * by - ay * bx + az * bw], axis=-1)
+
+
+def quaternion_conjugate_np(q: np.ndarray) -> np.ndarray:
+    """The inverse rotations of unit quaternions (..., 4)."""
+    out = np.array(q, dtype=np.float64, copy=True)
+    out[..., 1:] *= -1.0
+    return out
+
+
 def align_quaternion_signs(quaternions: np.ndarray, axis: int = 0) -> np.ndarray:
     """Flip signs along 'axis' (time) so that consecutive quaternions have a
     positive dot product: q and -q are the same rotation, and interpolation

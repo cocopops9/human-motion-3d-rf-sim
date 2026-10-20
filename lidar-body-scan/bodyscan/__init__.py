@@ -16,7 +16,7 @@ Layers (each one only uses the layers above it):
     detection      rotating objects and people in a sequence of frames
     capture        recording with the Ouster sensor (optional dependency: ouster-sdk)
     pipelines      the steps above assembled for one setup (turntable, turning in place, meshing)
-    body           the body model (SMPL-X format): skeleton, rotations, skinning (needs PyTorch)
+    body           the body model (SMPL-X format): skeleton, rotations, skinning, anatomy (needs PyTorch)
     dynamic        moving people: segmentation, avatar, tracking, export, simulation, evaluation
     commands       the command-line interface (python -m bodyscan ...)
 
@@ -24,4 +24,4 @@ Every tunable parameter is declared once in a configuration section (see
 bodyscan.config) together with its help text and the effect of changing it.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"

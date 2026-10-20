@@ -29,14 +29,17 @@ The guess for a hidden limb A with partner B is then
 
     target_A(t) = mirror(rotations_B(t - shift)),   shift 0 or T / 2
 
-(mirror: the same rotations seen in a mirror at the body's midplane, x, -y,
--z of the axis-angle in SMPL-X; limb_guesses mirrors the world orientations
-of the partner's segments in the frame of the facing direction). After the
-refinement (stage 2) the tracker replaces the hidden limb by its guess plus
-the offset from it observed whenever the limb shows (a hand appearing in
-front of the trunk), carried between observations (bridged_offsets): the
-hidden limb moves like its partner, and meets what was observed just before
-and just after (bodyscan.dynamic.track, Tracker.complete_hidden_limbs).
+(mirror: the same joint rotations seen in a mirror at the body's midplane,
+x, -y, -z of the axis-angle in SMPL-X; each rotation relative to its parent
+joint, so the guessed arm hangs from the chest as its partner does:
+joint_guesses). After the refinement (stage 2) the tracker replaces the
+hidden limb by its guess turned by the rotation from it observed whenever
+the limb shows (a hand appearing in front of the trunk), carried between
+observations (carried_offsets): the hidden limb moves like its partner, and
+meets what was observed just before and just after (bodyscan.dynamic.track,
+Tracker.complete_hidden_limbs). Rotations are combined as rotations
+(quaternion products and spherical interpolation), never by adding their
+axis-angle components.
 
 The plan changes smoothly in time: the cycle is held steady, and the
 confidence fades in and out over FADE seconds around every change of mode,
@@ -73,14 +76,12 @@ class CouplingConfig:
                                    effect="false: the hidden limbs start stage 2 where stage 1 left them (synthetic "
                                           "side-on jumps: hand of the arm the sensor sees 0.24 m/s of velocity "
                                           "error with the guessed start, 0.34 without)")
-    shadow_turn: float = param(32.0, "largest turn of the guessed limb about the vertical tried, in steps of 8 "
-                                     "deg, when the guess puts it where the sensor saw empty space or something "
-                                     "else: the facing of a person seen side-on is uncertain by 5 to 10 deg, and "
-                                     "mirroring at a midplane turned by that much turns the guess by twice as much; "
-                                     "the smallest turn that brings the limb back into the shadow of the body is "
-                                     "kept (0: never turned)", unit="deg",
-                               effect="0: the far arm of a person seen side-on often sticks out of the body's "
-                                      "shadow by 10 to 20 cm (synthetic side-on jumps)")
+    hide_guessed_limbs: bool = param(True, "a guessed arm standing where the sensor saw something else (empty "
+                                           "space beyond it, a surface behind it) is moved out of its sight by the "
+                                           "least turn of its shoulder and elbow (Tracker.hide_guessed_limbs)",
+                                     effect="false: the guessed arm stays where its partner's mirror puts it "
+                                            "(synthetic jog across the line of sight: visible body in free space "
+                                            "4.2 % instead of 3.0 %, far wrist 120 instead of 104 mm)")
 
 
 # Limbs, their partners and the joints coupled (indices into the 21 body joints), with the weight
@@ -464,206 +465,98 @@ def _steady(values: np.ndarray, half: int, sigma: float) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------------
-# Targets
+# Guesses
 # ----------------------------------------------------------------------------
 
-def _interpolate(times, values, at):
-    """values (F, ...) at times 'at' (linear; held at the ends)."""
-    flat = values.reshape(len(times), -1)
-    out = np.stack([np.interp(at, times, flat[:, k]) for k in range(flat.shape[1])], axis=1)
-    return out.reshape((len(at),) + values.shape[1:])
+@dataclass
+class JointGuess:
+    """The guess for one limb: the rotations (F, J, 3) axis-angle of its joints, each relative to its
+    parent joint (the joint rotations of SMPL-X), and the source weight (F,): the confidence of the plan
+    times how well the partner was observed at the times its motion is taken from."""
+    rotations: np.ndarray
+    weight: np.ndarray
 
 
-# The joint each limb hangs from, and the chain of the limb (SMPL-X names).
-CHAINS = {
-    "left_arm": ("spine3", LIMB_JOINTS["left_arm"]),
-    "right_arm": ("spine3", LIMB_JOINTS["right_arm"]),
-    "left_leg": ("pelvis", LIMB_JOINTS["left_leg"]),
-    "right_leg": ("pelvis", LIMB_JOINTS["right_leg"]),
-}
-MIRROR_UPRIGHT = np.diag([1.0, -1.0, 1.0])       # the midplane in the upright frame (x forward, y left)
-MIRROR_MODEL = np.diag([-1.0, 1.0, 1.0])         # the midplane in SMPL-X model space (x left)
-
-
-def global_rotations(root_matrix: np.ndarray, body: np.ndarray) -> dict:
-    """World rotations (F, 3, 3) of the pelvis, the spine and the limb joints of the tracker's poses
-    (world = root . WORLD_FROM_MODEL . model)."""
-    J = skeleton.JOINT
-
-    def local(name):
-        return _rotation_matrices(body[:, J[name] - 1])
-
-    g = {"pelvis": root_matrix @ skeleton.WORLD_FROM_MODEL}
-    g["spine1"] = g["pelvis"] @ local("spine1")
-    g["spine2"] = g["spine1"] @ local("spine2")
-    g["spine3"] = g["spine2"] @ local("spine3")
-    for parent, chain in CHAINS.values():
-        previous = g[parent]
-        for name in chain:
-            previous = previous @ local(name)
-            g[name] = previous
-    return g
-
-
-def heading(root_matrix: np.ndarray) -> np.ndarray:
-    """(F, 3, 3) the turn about the vertical of every frame: the facing direction (x of the upright
-    frame) projected on the floor."""
-    yaw = np.arctan2(root_matrix[:, 1, 0], root_matrix[:, 0, 0])
-    out = np.zeros((len(yaw), 3, 3))
-    out[:, 0, 0], out[:, 0, 1] = np.cos(yaw), -np.sin(yaw)
-    out[:, 1, 0], out[:, 1, 1] = np.sin(yaw), np.cos(yaw)
-    out[:, 2, 2] = 1.0
-    return out
-
-
-class LimbGuess:
-    """The guess for one limb at some frames: the world orientations of its segments mirrored from the
-    partner before and after (N, 4, 3, 3), how the two blend (N,), the source weight (N,) and the world
-    rotation of the joint the limb hangs from (N, 3, 3)."""
-
-    def __init__(self, before, after, blend, weight, parent, chain_length):
-        self.before, self.after, self.blend, self.weight, self.parent = before, after, blend, weight, parent
-        self.chain_length = chain_length
-
-    def local(self, turn=None) -> np.ndarray:
-        """(N, 4, 3) joint rotations hanging the guessed limb from its parent, the whole limb turned
-        about the vertical by 'turn' (N,) radians (None: not turned)."""
-        from bodyscan.body.rotations import matrix_to_axis_angle_np
-
-        def hang(orientations):
-            if turn is not None:
-                spin = heading_of_yaw(turn)
-                orientations = spin[:, None] @ orientations
-            locals_ = []
-            for k in range(self.chain_length):
-                previous = self.parent if k == 0 else orientations[:, k - 1]
-                locals_.append(np.einsum("fji,fjk->fik", previous, orientations[:, k]))
-            return matrix_to_axis_angle_np(np.stack(locals_, axis=1))
-
-        target = hang(self.before)
-        if np.any(self.blend > 0):
-            later = hang(self.after)
-            target = (1 - self.blend)[:, None, None] * target + self.blend[:, None, None] * later
-        return target
-
-
-def heading_of_yaw(yaw: np.ndarray) -> np.ndarray:
-    """(N, 3, 3) rotations about the vertical by yaw (N,) radians."""
-    yaw = np.asarray(yaw, dtype=np.float64)
-    out = np.zeros((len(yaw), 3, 3))
-    out[:, 0, 0], out[:, 0, 1] = np.cos(yaw), -np.sin(yaw)
-    out[:, 1, 0], out[:, 1, 1] = np.sin(yaw), np.cos(yaw)
-    out[:, 2, 2] = 1.0
-    return out
-
-
-def limb_guesses(times: np.ndarray, root_matrix: np.ndarray, body: np.ndarray, plan: CouplingPlan,
-                 observation: dict, limbs=LIMBS, frames=None) -> dict:
-    """{limb: LimbGuess} at the frames 'frames' (indices; default all). The partner's limb at
-    t - shift (and at t + shift for an alternating motion, blended by how well the partner was
-    observed then) is mirrored at the body's midplane in the frame of the facing direction, the
-    vertical plane along the facing: its world orientation, not its rotations relative to the
-    trunk, so that a trunk tracked slightly twisted is not doubled on the other side. Source weight:
-    the confidence of the plan times how well the partner was observed at those times (0 where the
-    plan is unknown; smoothed over a few frames, so that a partner hidden for a frame or two, whose
-    pose there the refinement carries smoothly, does not switch the guess off and on)."""
+def joint_guesses(times: np.ndarray, body: np.ndarray, plan: CouplingPlan, observation: dict,
+                  limbs=LIMBS) -> dict:
+    """{limb: JointGuess}. The partner's joint rotations at t - shift (and at t + shift for an alternating
+    motion, the two blended by how well the partner was observed then) seen in the mirror of the body's
+    midplane (mirror()): the guessed arm hangs from the chest as its partner does, the guessed leg from
+    the pelvis. Mirrored relative to the trunk, not in the world: a person sees two arms as moving alike
+    when they do so relative to the shoulders (version 1.5 mirrored the world orientations at the
+    vertical plane of the pelvis' facing, which doubled every twist of the chest: on the s02 side-on jumps,
+    with the chest tracked twisted by 23 to 28 deg (p95), the far wrist was 6 to 14 cm (median) away from
+    the mirror image of the near one relative to the chest).
+    The partner's motion is interpolated in time on quaternions (rotations, not their components). The
+    source weight is smoothed over a few frames, so that a partner hidden for a frame or two, whose pose
+    there the refinement carries smoothly, does not switch the guess off and on, and fades out towards
+    the ends of the take where half a cycle before or after leaves it."""
     from scipy.ndimage import gaussian_filter1d, maximum_filter1d
-    from bodyscan.body.rotations import interpolate_rotations, matrix_to_axis_angle_np
+    from bodyscan.body.rotations import axis_angle_to_quaternion_np, interpolate_rotations, slerp_np, \
+        quaternion_to_axis_angle_np
     times = np.asarray(times, dtype=np.float64)
-    frames = np.arange(len(times)) if frames is None else np.asarray(frames)
-    every = np.arange(len(times))
-    at, shift = times[every], plan.shift
-    rotations = global_rotations(root_matrix, body)
-    turn = heading(root_matrix)
+    shift = np.asarray(plan.shift, dtype=np.float64)
+    alternating = shift > 0
     out = {}
     for limb in limbs:
         partner = PARTNER[limb]
-        parent, chain = CHAINS[limb]
-        # the partner's segments relative to the facing of their own frame, as rotation vectors
-        relative = np.stack([np.einsum("fji,fjk->fik", turn, rotations[name]) for name in CHAINS[partner][1]],
-                            axis=1)
-        relative = matrix_to_axis_angle_np(relative)
-        # how well the partner was observed half a cycle before and after (alternating; only before for
-        # together), smoothed over a few frames, and fading out over FADE towards the ends of the take:
-        # the two blend by these, so the guess must not switch from one to the other between two frames
-        # (the start of a run, where the time half a cycle before enters the take: the guessed hand
-        # jumped by 30 cm in a frame)
+        source = mirror(np.asarray(body, dtype=np.float64)[:, body_indices(partner)])           # (F, J, 3)
         seen = gaussian_filter1d(maximum_filter1d(observation[partner], 5, mode="nearest"), 2.0, mode="nearest")
-        before, after = at - shift, at + shift
-        seen_before = np.interp(before, times, seen) * np.where(shift > 0, np.clip((before - times[0]) / FADE, 0.0, 1.0),
-                                                                1.0)
-        seen_after = (np.interp(after, times, seen) * np.clip((times[-1] - after) / FADE, 0.0, 1.0)
-                      * (shift > 0))
-        blend = ((seen_after + 0.05 * (shift > 0)) / (seen_before + seen_after + 0.05 * (1.0 + (shift > 0))))[frames]
+        before, after = times - shift, times + shift
+        seen_before = np.interp(before, times, seen) * np.where(alternating,
+                                                                np.clip((before - times[0]) / FADE, 0.0, 1.0), 1.0)
+        seen_after = np.interp(after, times, seen) * np.clip((times[-1] - after) / FADE, 0.0, 1.0) * alternating
+        # the share of the partner half a cycle later: by how well it was observed then and before
+        blend = (seen_after + 0.05 * alternating) / (seen_before + seen_after + 0.05 * (1.0 + alternating))
         support = np.clip(np.maximum(seen_before, seen_after), 0.0, 1.0)
-
-        def mirrored(when):
-            return (turn[frames][:, None] @ MIRROR_UPRIGHT
-                    @ _rotation_matrices(interpolate_rotations(times, relative, when)) @ MIRROR_MODEL)
-
-        out[limb] = LimbGuess(mirrored(before[frames]), mirrored(after[frames]) if np.any(blend > 0) else None, blend,
-                              (plan.confidence * support)[frames], rotations[parent][frames], len(chain))
+        rotation = axis_angle_to_quaternion_np(interpolate_rotations(times, source, before))
+        if np.any(blend > 0):
+            later = axis_angle_to_quaternion_np(interpolate_rotations(times, source, after))
+            rotation = slerp_np(rotation, later, np.broadcast_to(blend[:, None], rotation.shape[:-1]))
+        out[limb] = JointGuess(quaternion_to_axis_angle_np(rotation), plan.confidence * support)
     return out
 
 
-def partner_targets(times: np.ndarray, root_matrix: np.ndarray, body: np.ndarray, plan: CouplingPlan,
-                    observation: dict, limbs=LIMBS, frames=None) -> dict:
-    """For every limb: (target (N, 4, 3) joint rotations, source weight (N,)): limb_guesses hung from
-    the limb's parent as it is now."""
-    return {limb: (guess.local(), guess.weight)
-            for limb, guess in limb_guesses(times, root_matrix, body, plan, observation, limbs, frames).items()}
+IDENTITY = np.array([1.0, 0.0, 0.0, 0.0])
 
 
-def bridged_offsets(times: np.ndarray, offsets: np.ndarray, anchored: np.ndarray, memory: float,
+def carried_offsets(times: np.ndarray, offsets: np.ndarray, anchored: np.ndarray, memory: float,
                     longest: float = 3.0) -> np.ndarray:
-    """Offsets (F, ...) of a limb from its guess, known where it was observed ('anchored'), carried
-    into the frames between: across a gap between two observations at most 'longest' seconds apart
-    they change linearly from one to the other (so the limb meets its observations on both sides
-    and in between moves like its partner, with the partner's own drift over the gap taken out);
-    before the first and after the last observation, and in longer gaps, they fade from the nearest
-    observations with exp(-dt / memory) (anchored_offsets): far from any, the guess alone."""
+    """Rotation offsets (F, J, 4) unit quaternions of a limb from its guess, known where the limb was
+    observed ('anchored' > 0.5), carried into the frames between: across a gap between two observations at
+    most 'longest' seconds apart they turn from the one to the other (spherical interpolation), so the
+    limb meets its observations on both sides and in between moves like its partner; before the first and
+    after the last observation, and across longer gaps, they fade towards no offset with exp(-dt / memory)
+    of the nearest observations (shared between the one before and the one after by their fades): far
+    from any observation, the guess alone."""
+    from bodyscan.body.rotations import slerp_np
     times = np.asarray(times, dtype=np.float64)
-    out = anchored_offsets(times, offsets, anchored, memory)
-    marks = np.flatnonzero(np.asarray(anchored) > 0.5)
-    for a, b in zip(marks[:-1], marks[1:]):
-        if b - a < 2 or times[b] - times[a] > longest:
-            continue
-        u = (times[a + 1:b] - times[a]) / (times[b] - times[a])
-        shape = (-1,) + (1,) * (offsets.ndim - 1)
-        out[a + 1:b] = (1 - u).reshape(shape) * offsets[a] + u.reshape(shape) * offsets[b]
-    return out
-
-
-def anchored_offsets(times: np.ndarray, offsets: np.ndarray, anchored: np.ndarray, memory: float) -> np.ndarray:
-    """Offsets (F, ...) of a limb from its target, carried from the frames where the limb was observed
-    ('anchored', weights 0..1) into the frames between them: each frame takes the offsets of the
-    nearest anchored frames before and after it, faded with exp(-dt / memory) and weighted by the
-    two fades (a frame between two observations close in time gets their interpolation; far from
-    any, the offset fades to zero: the target alone)."""
-    times = np.asarray(times, dtype=np.float64)
+    offsets = np.asarray(offsets, dtype=np.float64)
     count = len(times)
-    out = np.zeros_like(offsets)
-    anchored_index = np.flatnonzero(anchored > 0.5)
-    if len(anchored_index) == 0 or memory <= 0:
+    identity = np.broadcast_to(IDENTITY, offsets.shape[1:]).copy()
+    out = np.broadcast_to(identity, offsets.shape).copy()
+    marks = np.flatnonzero(np.asarray(anchored) > 0.5)
+    if len(marks) == 0 or memory <= 0:
         return out
     for i in range(count):
-        if anchored[i] > 0.5:
+        k = np.searchsorted(marks, i)
+        if k < len(marks) and marks[k] == i:
             out[i] = offsets[i]
             continue
-        k = np.searchsorted(anchored_index, i)
-        fades, values = [], []
-        if k > 0:
-            j = anchored_index[k - 1]
-            fades.append(np.exp(-(times[i] - times[j]) / memory))
-            values.append(offsets[j])
-        if k < len(anchored_index):
-            j = anchored_index[k]
-            fades.append(np.exp(-(times[j] - times[i]) / memory))
-            values.append(offsets[j])
-        fades = np.array(fades)
-        if fades.sum() <= 1e-9:
+        a = marks[k - 1] if k > 0 else None
+        b = marks[k] if k < len(marks) else None
+        joints = offsets.shape[1:-1]
+        if a is not None and b is not None and times[b] - times[a] <= longest:
+            u = (times[i] - times[a]) / max(times[b] - times[a], 1e-9)
+            out[i] = slerp_np(offsets[a], offsets[b], np.full(joints, u))
             continue
-        # share between before and after by the fades, overall size by the larger fade
-        share = fades / fades.sum()
-        out[i] = fades.max() * sum(s * v for s, v in zip(share, values))
+        fade_a = np.exp(-(times[i] - times[a]) / memory) if a is not None else 0.0
+        fade_b = np.exp(-(times[b] - times[i]) / memory) if b is not None else 0.0
+        if fade_a + fade_b <= 1e-9:
+            continue
+        if a is not None and b is not None:
+            mixed = slerp_np(offsets[a], offsets[b], np.full(joints, fade_b / (fade_a + fade_b)))
+        else:
+            mixed = offsets[a] if a is not None else offsets[b]
+        out[i] = slerp_np(identity, mixed, np.full(joints, max(fade_a, fade_b)))
     return out

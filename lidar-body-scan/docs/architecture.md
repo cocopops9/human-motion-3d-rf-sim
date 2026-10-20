@@ -22,7 +22,8 @@ bodyscan/
     capture/         sensor access, run directory, phases, protocols, motor
     pipelines/       the steps assembled for one setup
     synthetic.py     synthetic scenes and recordings
-    body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body
+    body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body,
+                     anatomy (hinge joints, joint speeds)
     dynamic/         moving people: motions, simulation, segmentation, avatar, tracking,
                      evaluation, export, review, test bench
     commands/        the command line
