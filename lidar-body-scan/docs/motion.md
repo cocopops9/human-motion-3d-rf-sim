@@ -652,19 +652,20 @@ alike; with one arm swinging 30 % less than the other, later and more bent,
 the joint error still falls by 9 to 21 %.
 
 Version 1.6 against 1.5 (the whole pipeline of each release on the same
-takes, one noise realisation each; the table is in CHANGELOG.md). The body
-keeps its anatomy: elbows out of their plane in 27 to 61 % of the frames with
-1.5, never with 1.6; knees in up to 16 %, never; the chest twisted against
-the pelvis by 16 deg (p95) in the side-on jumps, whose true chest does not
-twist, 1 deg with 1.6. The body-part velocity error is lower in four of the
-five motions (side-on jumps 0.305 to 0.256 m/s, the far hand 0.93 to
-0.70 m/s; jog towards the sensor 0.693 to 0.615 m/s) and equal in the walk.
+takes; side-on jumps over three noise realisations, the other motions one;
+the table is in CHANGELOG.md). The body keeps its anatomy: elbows out of
+their plane in 20 to 61 % of the frames with 1.5, never with 1.6; knees in up
+to 19 %, never; the chest twisted against the pelvis by 16 deg (p95) in the
+side-on jumps, whose true chest does not twist, 1 deg with 1.6. The
+body-part velocity error is lower in four of the five motions (side-on jumps
+0.332 to 0.274 m/s, lower in each realisation, the far hand 1.07 to
+0.75 m/s; jog towards the sensor 0.693 to 0.615 m/s) and equal in the walk.
 The joint error is lower in the jog across the line of sight (19.1 to
 16.2 mm) and the jumps facing the sensor, equal in the walk and the jog
-towards the sensor, and higher in the side-on jumps (20.6 to 21.6 mm: the
-far elbow 55 to 72 mm). The held chest is stiffer than a real one in a walk
-or a jog (5 deg of twist in the synthetic truth, p95; 0.7 to 1.5 deg tracked,
-7 to 12 with 1.5).
+towards the sensor, and higher in the side-on jumps (22.3 to 23.4 mm, higher
+in each realisation: the far elbow 61 to 68 mm). The held chest is stiffer
+than a real one in a walk or a jog (5 deg of twist in the synthetic truth,
+p95; 0.7 to 1.5 deg tracked, 7 to 12 with 1.5).
 
 ## 7. Limits
 

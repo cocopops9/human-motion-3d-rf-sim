@@ -85,31 +85,34 @@ Changes to `track` (each can be switched back with its option):
   arms_pushed_out. The `joint_limits` flag includes the hinges.
 
 On the synthetic bench (test body, 1024 x 20, default settings), the whole
-pipeline of 1.5.0 as released and of 1.6.0 on the same takes (one noise
-realisation each; joint error, body-part velocity error, error of the far
-wrist and elbow, velocity error of the far hand):
+pipeline of 1.5.0 as released and of 1.6.0 on the same takes (side-on jumps:
+mean over three noise realisations, with the mean paired difference and its
+range; the others one realisation each; joint error, body-part velocity
+error, error of the far wrist and elbow, velocity error of the far hand):
 
 | Motion | Joint error | Body-part velocity error | Far wrist | Far elbow | Far hand velocity |
 |---|---|---|---|---|---|
-| jumps side-on, 2.3 m | 20.6 then 21.6 mm | 0.305 then 0.256 m/s | 77 then 78 mm | 55 then 72 mm | 0.93 then 0.70 m/s |
+| jumps side-on, 2.3 m | 22.3 then 23.4 mm (+1.1, +0.5 to +1.7) | 0.332 then 0.274 m/s (-0.058, -0.096 to -0.030) | 85 then 78 mm | 61 then 68 mm | 1.07 then 0.75 m/s |
 | jog across, 2.4 m | 19.1 then 16.2 mm | 0.310 then 0.289 m/s | 139 then 104 mm | 38 then 43 mm | 1.13 then 1.04 m/s |
 | walk across, 2.4 m | 11.2 then 11.0 mm | 0.099 then 0.099 m/s | 28 then 33 mm | 25 then 23 mm | 0.22 then 0.24 m/s |
 | jumps facing the sensor | 10.6 then 10.0 mm | 0.130 then 0.124 m/s | 14 then 12 mm | 15 then 14 mm | 0.21 then 0.18 m/s |
 | jog towards the sensor | 16.0 then 16.0 mm | 0.693 then 0.615 m/s | 67 then 77 mm | 36 then 35 mm | 2.01 then 1.80 m/s |
 
-The body is the more human one: elbows out of their plane in 27 to 61 % of
-the frames with 1.5.0, never with 1.6.0; knees in up to 16 %, never; the
+The body is the more human one: elbows out of their plane in 20 to 61 % of
+the frames with 1.5.0, never with 1.6.0; knees in up to 19 %, never; the
 chest twisted against the pelvis by 16 deg (p95) in the side-on jumps, whose
 true chest does not twist at all, 1 deg with 1.6.0; arms in the trunk up to
 29 mm (jog towards the sensor), 12 mm; the guessed arm in free space as
 often as with 1.5.0 or less (except the side-on jumps: visible body in free
-space 2.0 then 2.3 %). Worse: the far elbow of the side-on jumps (55 then
-72 mm) and the far wrist of the walk (28 then 33 mm); the chest is now
+space 2.4 then 2.5 %). Worse: the joint error of the side-on jumps, higher
+in each of the three realisations (the joints the sensor does not see 44
+then 47 mm, the far elbow 61 then 68 mm, the velocity of the near hand 0.24
+then 0.27 m/s), and the far wrist of the walk (28 then 33 mm); the chest is now
 stiffer than a real one in a walk or a jog (synthetic truth: 5 deg of twist,
 p95; 1.6.0 tracks 0.7 to 1.5 deg, 1.5.0 7 to 12 deg).
 
-On the hidden arms of the side-on jumps, the steps one by one (same stage 1
-and 2): the plain mirror at the chest 22.7 mm, far wrist 94 mm, far elbow
+On the hidden arms of the side-on jumps (first realisation), the steps one
+by one (same stage 1 and 2): the plain mirror at the chest 22.7 mm, far wrist 94 mm, far elbow
 80 mm, far hand velocity 0.76 m/s, visible body in free space 3.4 %; then
 out of the sensor's sight 21.6 mm, 78 mm, 72 mm, 0.70 m/s, 2.3 %. The speed
 limits changed no frame of these takes but two of the jog towards the
@@ -129,7 +132,8 @@ Tried and not kept:
 
 Not validated yet: everything on real recordings (re-run the s02 takes and
 send back the motion files: the anatomy, turns, speeds and arm depths are
-measured from them); more than one noise realisation of the synthetic takes.
+measured from them); more than one noise realisation of the motions other
+than the side-on jumps.
 
 ## 1.5.0: hidden limbs guessed from their partner; arms out of the trunk; the facing guarded (2026-10-18)
 
