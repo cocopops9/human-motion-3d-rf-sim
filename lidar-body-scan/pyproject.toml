@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bodyscan"
-version = "1.6.0"
+version = "1.7.0"
 description = "Ouster LiDAR capture, fusion and meshing of people, standing and moving, for radio ray tracing (Sionna RT)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,7 +14,8 @@ dependencies = ["numpy>=1.24", "open3d>=0.17"]
 [project.optional-dependencies]
 plots = ["matplotlib"]
 capture = ["ouster-sdk>=0.11", "pyserial", "sounddevice"]
-motion = ["torch>=2.0", "pillow"]
+motion = ["torch>=2.0", "pillow", "scipy"]
+viewer = ["viser>=1.0"]
 
 [project.scripts]
 bodyscan = "bodyscan.commands:main"

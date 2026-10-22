@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.7.0: numbers instead of videos, a viewer, and the first multi-sensor building blocks (2026-10-21)
+
+The goal changed on 21 Oct: reconstruct motion and shape as precisely as possible with up to three
+sensors (the Ouster OS0-128, a RoboSense Helios 16 and an ASUS Xtion depth camera), and judge results
+by numbers and an interactive viewer instead of review videos. Plan: docs/multisensor-plan.md. This
+version adds what does not depend on the multi-sensor tracker; `track` is unchanged.
+
+Added:
+
+- `bodyscan.sensors`: nominal models of the Ouster OS0-128, the Helios 16 (16 beams, +-15 deg, 2 deg
+  apart; 0.2 deg at 10 Hz) and the Xtion (640 x 480, 58 x 45 deg, 0.8 to 3.5 m, depth noise
+  0.0016 z^2, landscape or portrait); `RangeImage`, the frame type of every sensor (rays, ranges,
+  valid / no return / unknown, times, noise); a ray-casting renderer; clocks (sensor time to session
+  time from the lower envelope of the arrival times, robust to stalls of the receiving PC); placements
+  and rig.json; candidate layouts around the capture zone.
+- `bodyscan.evaluation` and `evaluate-take`: fit quality of a tracked take without ground truth.
+  Every pixel near the person is compared, along its ray, with the body posed at the pixel's time:
+  fitted, violation (the body where the sensor saw through), unexplained, silhouette, unobserved.
+  Per-vertex error map (regions no sensor saw have no value), per-part tables, point inlier, outlier
+  and clutter rates, kinematics (jitter as the velocity power above 6 Hz, turns faster than
+  720 deg/s, hinges out of plane, joint speeds over the limits), tracker flag shares; metrics.json,
+  metrics.npz, coloured heatmap meshes (median, p95, violation, coverage) and report.md.
+- `view`: an interactive viewer in the browser (Viser, optional: `pip install viser` or the `viewer`
+  extra): take by motion type, playback, points by sensor or by distance to the body, the body plain,
+  with guessed limbs in violet or as a heatmap, skeleton, sensor, numbers of the frame and of the
+  take, curves.
+- `bench-rig`: coverage of the body by candidate layouts (visible share per part and per sensor,
+  sample spacing).
+- docs/evaluation.md, docs/multisensor-plan.md, docs/adr/0001-sensor-abstraction.md.
+
+Fixed:
+
+- SciPy was used by the left-right coupling of `track` (bodyscan.dynamic.coupling) since 1.5.0 but
+  not declared: it is now in the `motion` extra.
+
+Measured (tests and runs in a 1-CPU sandbox, test body):
+
+- evaluate-take on a simulated standing person with its true motion: fitted 90.4 %, violation 2.4 %,
+  unexplained 7.2 % of the ranged pixels, point distance median 4.8 mm; with the motion moved 8 cm
+  towards the sensor: violation 92.5 %, per-part median errors 79 to 89 mm (the 8 cm along the rays),
+  while the nearest-surface point distance rises only to 27.7 mm (it understates displacements along
+  the ray).
+- bench-rig, mean share of the body visible to some sensor (walk across, walk radial, jumps facing,
+  jumps side-on): Ouster alone 38, 46, 46, 31 %; 120 deg triangle with the Xtion in landscape at
+  2.5 m 91, 91, 94, 91 %; Xtion opposite and Helios at the side 90, 91, 92, 79 %. Sample spacing on
+  the visible surface: Xtion 3 to 6 mm, Ouster 25 to 37 mm, Helios 39 to 64 mm.
+- Fast tests: the 107 existing ones (with SciPy installed) plus 14 sensor, 12 evaluation and 3 viewer
+  tests: 136 pass, 6 slow ones skipped.
+
+Not validated:
+
+- evaluate-take, view and bench-rig have not yet run on the real s02 takes or with the s02 avatar.
+- The viewer was tested headless (server, controls and every drawing mode); it has not been looked at
+  in a browser.
+- The Xtion noise model is scaled from Kinect v1 measurements (same sensor class), not measured on this
+  unit; its frame time is assumed global (no rolling shutter).
+- Coverage is geometry only: no noise, dropouts, occluders or tracking.
+
 ## 1.6.0: a human body: hinges, physical turns and speeds, a steady chest, the hidden arm mirrored at the chest and kept out of sight (2026-10-20)
 
 The review videos of the 27 s02 takes tracked with 1.5.0 were better than

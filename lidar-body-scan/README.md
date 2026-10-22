@@ -4,7 +4,7 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.6.0-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.7.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
 ![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)
@@ -131,6 +131,7 @@ The motion comes only from the LiDAR. Where one sensor cannot see (the arm on th
 | **Detect** | Finds objects rotating about a vertical axis and objects shaped like a standing person in any recording, and gives their centres. |
 | **Moving people** | `capture-motion`, `segment-motion`, `avatar`, `track`, `review-motion`, `export-motion`: from a recording of a person walking or jumping to an animated mesh with per-vertex velocities, through a body model fitted to the person's turntable scan and to every frame. |
 | **Synthetic bench** | `simulate-motion` scans a moving body with a simulated OS0-128 (rolling shutter, beam footprint, dropouts) with the exact truth; `evaluate-motion` and `bench-motion` measure joint, velocity and Doppler errors. |
+| **Evaluation and viewer** | `evaluate-take` measures a tracked take against its own measurements, ray by ray (fitted, violation, unexplained), per frame, per body part and per vertex, with heatmap meshes; `view` shows takes in the browser (points, body, guessed limbs, heatmaps, numbers); `bench-rig` compares layouts of the Ouster, a Helios 16 and an Xtion by how much of the body they see. See docs/evaluation.md. |
 | **Reproducible** | Every run writes a JSON report with the complete configuration. Settings come from options, TOML/JSON files, or `--set section.name=value`. |
 | **Light install** | Only numpy and open3d for the processing. scipy is not used. Works with the Python that MATLAB uses, for PCs where software can only be installed through MATLAB. |
 | **Tested** | Unit and end-to-end tests on synthetic recordings, and a `simulate` command that makes them without the sensor. |
@@ -378,6 +379,9 @@ Input: a capture directory, or a folder of point clouds (one `.ply`, `.pcd`, `.x
 | `simulate-motion` | a synthetic recording of a moving body, with its truth |
 | `evaluate-motion` | the errors of a tracked motion against that truth |
 | `bench-motion` | simulate, track and evaluate over motions, sensor modes and distances |
+| `evaluate-take` | fit quality of a tracked take: pixel classes, per-part tables, kinematics, heatmap meshes |
+| `view` | interactive viewer of tracked takes in the browser (needs viser) |
+| `bench-rig` | coverage of the body by candidate layouts of the Ouster, Helios and Xtion |
 | `make-test-body` | a procedural body in the SMPL-X file format, for tests without SMPL-X |
 
 ### Configuration

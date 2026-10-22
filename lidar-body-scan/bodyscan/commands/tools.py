@@ -242,6 +242,7 @@ class Params(Command):
         from bodyscan.capture.protocols import InPlaceCaptureConfig, TurntableCaptureConfig
         from bodyscan.commands.motion import (AvatarCommandConfig, BenchMotion, ExportCommandConfig,
                                               MotionCaptureConfig, SegmentMotionConfig)
+        from bodyscan.commands.evaluation import BenchRigConfig, EvaluateTakeConfig
         from bodyscan.dynamic.bench import SimulateMotionConfig
         from bodyscan.dynamic.track import TrackPipelineConfig
         from bodyscan.pipelines.detect import DetectConfig
@@ -267,7 +268,9 @@ class Params(Command):
                                     ("bodyscan track", TrackPipelineConfig),
                                     ("bodyscan export-motion", ExportCommandConfig),
                                     ("bodyscan simulate-motion", SimulateMotionConfig),
-                                    ("bodyscan bench-motion", BenchMotion().config_class)):
+                                    ("bodyscan bench-motion", BenchMotion().config_class),
+                                    ("bodyscan evaluate-take", EvaluateTakeConfig),
+                                    ("bodyscan bench-rig", BenchRigConfig)):
             parts.append(cfg.to_markdown(config_class, title))
         text = "\n".join(parts) + "\n"
         if args.out:

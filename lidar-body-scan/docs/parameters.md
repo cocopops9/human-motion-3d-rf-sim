@@ -858,3 +858,35 @@ The grid of the test bench.
 | `--refine` | `True` | refine the whole sequence (stage 2) when tracking |  |
 | `--reuse` | `False` | keep the result of takes already tracked and evaluated (to resume a bench that stopped; the simulated recordings are always reused) |  |
 
+## bodyscan evaluate-take
+
+### [evaluation]
+
+Evaluating a tracked take against its measurements.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--every` | `1` | evaluate every n-th tracked frame |  |
+| `--sigma` | `0.01` m | range noise of the LiDAR used for the tolerance (one sigma) | larger: more pixels count as fitted, fewer as violations or unexplained |
+| `--sigma-factor` | `3.0` | tolerance = max(sigma_factor x sigma, min_tolerance) |  |
+| `--min-tolerance` | `0.02` m | smallest tolerance between a measured range and the body |  |
+| `--max-error` | `0.2` m | errors above this are capped in the per-vertex map |  |
+| `--block-columns` | `8` | crop columns posed together (the body is posed at their mean time) | smaller: closer to the rolling shutter, slower |
+| `--level` | `0` | subdivision level of the avatar for the evaluation (0: as tracked by default) |  |
+| `--outlier` | `0.05` m | a person point farther than this (and than the tolerance) from the body is an outlier |  |
+| `--clutter` | `0.25` m | a person point farther than this from the body belongs to nothing on it |  |
+| `--min-coverage` | `0.05` | vertices observed in fewer frames than this share get no error value in the per-part table and the heatmaps |  |
+| `--cutoff-hz` | `6.0` Hz | velocity power above this frequency counts as high-frequency (jitter) |  |
+| `--frame-errors` | `True` | store the per-frame per-vertex error in metrics.npz (for the viewer) |  |
+
+## bodyscan bench-rig
+
+### [coverage]
+
+The coverage study of a rig.
+
+| Option | Default | Meaning | Effect of changing it |
+|---|---|---|---|
+| `--rate` | `10.0` Hz | poses sampled per second of the motion |  |
+| `--occlusion-margin` | `0.01` m | a vertex is visible if the first surface along its ray lies within this of it |  |
+| `--half-visible` | `0.5` | a part counts as seen in a frame when at least this share of its area is visible to some sensor |  |

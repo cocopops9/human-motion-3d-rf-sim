@@ -8,6 +8,8 @@ Layers (each one only uses the layers above it):
 
     geometry       transforms, fitting, nearest neighbours, clustering
     io             recordings on disk, sensor models (range image to points)
+    sensors        multi-sensor rigs: models of the Ouster, Helios and Xtion, range images, clocks,
+                   placements (rig.json), candidate layouts
     scene          floor, static background, platform, regions of interest, foreground isolation
     registration   ICP variants and relative-turn solvers
     motion         platform angle versus time (stepper model, model-free solution)
@@ -18,10 +20,13 @@ Layers (each one only uses the layers above it):
     pipelines      the steps above assembled for one setup (turntable, turning in place, meshing)
     body           the body model (SMPL-X format): skeleton, rotations, skinning, anatomy (needs PyTorch)
     dynamic        moving people: segmentation, avatar, tracking, export, simulation, evaluation
+    evaluation     fit quality without ground truth (pixel classes, per-vertex error, heatmaps),
+                   kinematic plausibility, coverage of the body by a rig
+    viewer         interactive viewer of tracked takes in the browser (optional dependency: viser)
     commands       the command-line interface (python -m bodyscan ...)
 
 Every tunable parameter is declared once in a configuration section (see
 bodyscan.config) together with its help text and the effect of changing it.
 """
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"

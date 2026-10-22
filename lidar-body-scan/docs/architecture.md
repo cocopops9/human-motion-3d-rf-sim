@@ -13,6 +13,8 @@ bodyscan/
     log.py, jsonio.py, plots.py
     geometry/        transforms, fitting (planes, circles), neighbours, clustering
     io/              recordings on disk, sensor models, PLY writers
+    sensors/         multi-sensor rigs: Ouster, Helios and Xtion models, RangeImage, clocks,
+                     placements (rig.json), candidate layouts
     scene/           floor, background, platform, regions, isolation, stillness, coverage
     registration/    ICP variants, turn solver, keyframe registration
     motion/          platform angle against time: models, fitting, pairs, estimator
@@ -26,6 +28,9 @@ bodyscan/
                      anatomy (hinge joints, joint speeds)
     dynamic/         moving people: motions, simulation, segmentation, avatar, tracking,
                      evaluation, export, review, test bench
+    evaluation/      fit quality without ground truth: pixel classes, per-vertex error map,
+                     part tables, kinematics, heatmaps, coverage of the body by a rig
+    viewer/          interactive viewer of tracked takes (Viser, optional)
     commands/        the command line
 ```
 
@@ -34,7 +39,9 @@ the package; pipelines use everything above them; commands only build
 configurations and run pipelines or the functions of `dynamic`). Only
 `capture.sensor` and `capture.diagnostics` import the Ouster SDK, and only
 when a sensor or a recording is opened; only `capture.motor` imports
-pyserial. The processing of static scans needs numpy and open3d.
+pyserial. The processing of static scans needs numpy and open3d. `sensors`
+needs numpy and open3d only; `viewer` imports viser, and only inside the
+`view` command.
 
 PyTorch is needed only for moving people. `body.model` imports it; the
 modules of `dynamic` import it inside the functions that need it, so the

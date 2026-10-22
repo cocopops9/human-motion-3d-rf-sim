@@ -10,7 +10,7 @@ from bodyscan.commands.base import Command, PipelineCommand
 
 # Modules whose Command subclasses register themselves on import. A module
 # that needs an optional dependency (ouster-sdk) imports it inside run().
-_MODULES = ["fuse", "inplace", "mesh", "detect", "tools", "capture", "motion"]
+_MODULES = ["fuse", "inplace", "mesh", "detect", "tools", "capture", "motion", "evaluation"]
 
 
 def _load_commands():
