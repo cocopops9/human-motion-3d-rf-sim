@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.1: no file left open on Windows (2026-10-22)
+
+The first run of the fast tests on the recording laptop (Windows, Python 3.14) found two files left
+open. Windows cannot delete or overwrite an open file, so the temporary folders of two tests could not
+be removed; in use, the viewer locked every motion.npz and metrics.npz it had loaded until it was closed.
+
+Fixed:
+
+- `view`: the take data copies the arrays of motion.npz and metrics.npz into memory and closes the
+  files (it kept both open for as long as the take was shown).
+- `evaluate-take`: motion.npz is read and closed at the start (it stayed open for the whole evaluation).
+- `flag_shares` accepts the npz or a dict of its arrays.
+- tests/test_motion.py: the export test closes sequence.npz before removing its folder.
+
+Added:
+
+- Two tests that the viewer and `evaluate-take` leave no file open: they delete the motion, the
+  metrics and the avatar right after loading them (`evaluate-take` while it runs), and check that
+  every npz that numpy opened is closed, which also catches a leak on Linux.
+
 ## 1.7.0: numbers instead of videos, a viewer, and the first multi-sensor building blocks (2026-10-21)
 
 The goal changed on 21 Oct: reconstruct motion and shape as precisely as possible with up to three

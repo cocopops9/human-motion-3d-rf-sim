@@ -101,13 +101,13 @@ def kinematic_metrics(times, joints, root_rotation=None, body=None, cutoff_hz: f
 
 def flag_shares(motion_data) -> dict:
     """Share of frames with each tracker flag (motion.npz 'flags' and 'flag_names'), and the arm depth
-    inside the trunk over 2 cm when recorded."""
+    inside the trunk over 2 cm when recorded. motion_data: the npz or a dict of its arrays."""
     shares = {}
-    if "flags" in motion_data.files and "flag_names" in motion_data.files:
+    if "flags" in motion_data and "flag_names" in motion_data:
         flags = np.asarray(motion_data["flags"], dtype=np.int64)
         for bit, name in enumerate(str(n) for n in motion_data["flag_names"]):
             shares[name] = float(np.mean((flags >> bit) & 1)) if len(flags) else 0.0
-    if "arm_in_trunk" in motion_data.files:
+    if "arm_in_trunk" in motion_data:
         depth = np.asarray(motion_data["arm_in_trunk"], dtype=np.float64)
         if depth.size:
             shares["arm_more_than_2cm_in_trunk"] = float(np.mean(depth > 0.02))

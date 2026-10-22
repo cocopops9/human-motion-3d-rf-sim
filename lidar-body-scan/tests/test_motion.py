@@ -352,11 +352,13 @@ class ExportTest(unittest.TestCase):
             velocity = np.load(out / "frames" / "velocity_000010.npy")
             finite = (after - before) / 0.02
             self.assertLess(np.percentile(np.linalg.norm(velocity - finite, axis=1), 95), 0.05)
-            sequence = np.load(out / "sequence.npz")
-            pelvis = list(sequence["part_names"]).index("pelvis")
-            self.assertTrue(np.allclose(sequence["part_velocity"][:, pelvis], (1.0, 0.0, 0.0), atol=0.02))
-            arm = list(sequence["part_names"]).index("left_hand")
-            self.assertGreater(np.abs(sequence["part_velocity"][:, arm, 0] - 1.0).max(), 0.3)   # the arm swings
+            with np.load(out / "sequence.npz") as sequence:     # closed, or Windows cannot delete the folder
+                part_names = list(sequence["part_names"])
+                part_velocity = sequence["part_velocity"]
+            pelvis = part_names.index("pelvis")
+            self.assertTrue(np.allclose(part_velocity[:, pelvis], (1.0, 0.0, 0.0), atol=0.02))
+            arm = part_names.index("left_hand")
+            self.assertGreater(np.abs(part_velocity[:, arm, 0] - 1.0).max(), 0.3)   # the arm swings
             table = np.loadtxt(out / "joints.csv", delimiter=",", skiprows=1)
             self.assertEqual(table.shape, (steps, 1 + 3 * skeleton.NUM_JOINTS))
             self.assertTrue(np.allclose(table[:, 1], table[:, 0] - table[0, 0] + 0.3, atol=1e-3))   # pelvis x = t
@@ -365,7 +367,8 @@ class ExportTest(unittest.TestCase):
             # the whole motion: the velocity is right up to its first and last instants
             whole = export_motion(folder.path / "motion.npz", folder.path / "avatar.npz", folder.path / "whole",
                                   ExportConfig(rate=30.0, ply=False, velocities=False), device="cpu")
-            ends = np.load(folder.path / "whole" / "sequence.npz")["part_velocity"][[0, whole["steps"] - 1], pelvis]
+            with np.load(folder.path / "whole" / "sequence.npz") as sequence:
+                ends = sequence["part_velocity"][[0, whole["steps"] - 1], pelvis]
             self.assertTrue(np.allclose(ends, (1.0, 0.0, 0.0), atol=0.05), ends)
         finally:
             folder.cleanup()

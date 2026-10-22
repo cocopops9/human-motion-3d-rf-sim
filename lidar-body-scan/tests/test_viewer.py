@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import unittest
+import weakref
+from unittest import mock
 
 import numpy as np
 
@@ -12,6 +15,31 @@ from tests.helpers import TemporaryFolder
 from tests.test_evaluation import make_synthetic_take, needs_torch
 
 HAS_VISER = importlib.util.find_spec("viser") is not None
+
+
+class OpenNpzSpy:
+    """Records every npz file that numpy.load opens while active. still_open() lists those that are
+    still referenced and not closed: a file left open cannot be deleted on Windows."""
+
+    def __enter__(self):
+        self.opened = []
+        original = np.load
+
+        def load(file, *args, **kwargs):
+            result = original(file, *args, **kwargs)
+            if isinstance(result, np.lib.npyio.NpzFile):
+                self.opened.append((weakref.ref(result), os.path.basename(str(file))))
+            return result
+
+        self.patch = mock.patch.object(np, "load", load)
+        self.patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.patch.stop()
+
+    def still_open(self) -> list[str]:
+        return [name for ref, name in self.opened if (npz := ref()) is not None and npz.fid is not None]
 
 
 @needs_torch
@@ -68,6 +96,52 @@ class ViewerTest(unittest.TestCase):
         self.assertIn("Pixels", take.take_text())
         series = take.series()
         self.assertEqual(len(series["violation_share"]), len(take))
+
+    def _copy_inputs(self, name):
+        """Private copies of the motion, the evaluation and the avatar, which a test may delete."""
+        folder = self.root / name
+        shutil.copytree(self.root / "evaluations" / "s02_stand", folder / "evaluation")
+        shutil.copy(self.root / "results" / "s02_stand" / "motion.npz", folder / "motion.npz")
+        shutil.copy(self.avatar, folder / "avatar.npz")
+        return folder
+
+    def test_take_data_leaves_no_file_open(self):
+        from bodyscan.viewer.data import VERTEX_MODES, TakeData
+        folder = self._copy_inputs("no_open_viewer")
+        with OpenNpzSpy() as spy:
+            take = TakeData(folder / "motion.npz", self.root / "segments" / "s02_stand_seg", folder / "avatar.npz",
+                            None, folder / "evaluation")
+        self.assertEqual(spy.still_open(), [])
+        # deleting the inputs fails on Windows if a handle is left open
+        for path in (folder / "motion.npz", folder / "evaluation" / "metrics.npz", folder / "avatar.npz"):
+            os.remove(path)
+        # and the take still works from memory
+        self.assertEqual(take.vertices(2).shape, (len(take.labels), 3))
+        self.assertEqual(take.vertex_values(2, VERTEX_MODES[-1]).shape, (len(take.labels),))
+        self.assertIn("Pixels", take.take_text())
+        self.assertEqual(len(take.series()["violation_share"]), len(take))
+
+    def test_evaluate_take_leaves_no_file_open(self):
+        from bodyscan.dynamic.segment import SegmentedRecording
+        from bodyscan.evaluation.take import TakeEvaluationConfig, evaluate_take
+        folder = self._copy_inputs("no_open_evaluation")
+        load_frame = SegmentedRecording.load
+        checked = []
+
+        def delete_inputs_then_load(recording, index):
+            # the first segmented frame comes after the motion and the avatar are loaded
+            if not checked:
+                checked.append(spy.still_open())
+                os.remove(folder / "motion.npz")
+                os.remove(folder / "avatar.npz")
+            return load_frame(recording, index)
+
+        with OpenNpzSpy() as spy, mock.patch.object(SegmentedRecording, "load", delete_inputs_then_load):
+            result = evaluate_take(folder / "motion.npz", self.root / "segments" / "s02_stand_seg",
+                                   folder / "avatar.npz", config=TakeEvaluationConfig(sigma=0.008))
+        self.assertEqual(checked, [[]])
+        self.assertEqual(spy.still_open(), [])
+        self.assertIn("tracker_flags", result)
 
     @unittest.skipUnless(HAS_VISER, "needs viser (python -m pip install viser)")
     def test_application_draws_every_mode(self):

@@ -78,9 +78,11 @@ class TakeData:
         from bodyscan.dynamic.avatar import Avatar
         from bodyscan.dynamic.motions import PoseSequence
         self.motion_path = Path(motion_path)
-        self.data = np.load(self.motion_path, allow_pickle=False)
+        # Copy the arrays and close the file: an open npz locks it on Windows.
+        with np.load(self.motion_path, allow_pickle=False) as npz:
+            self.data = {key: npz[key] for key in npz.files}
         self.motion = PoseSequence.load(self.motion_path)
-        files = self.data.files
+        files = self.data
         self.frame_index = self.data["frame_index"] if "frame_index" in files else np.arange(len(self.motion))
         avatar_path = avatar_path or (str(self.data["avatar"]) if "avatar" in files else None)
         if not avatar_path:
@@ -105,7 +107,8 @@ class TakeData:
         self.evaluation = None
         self.evaluation_summary = None
         if evaluation_folder is not None and (Path(evaluation_folder) / "metrics.npz").exists():
-            self.evaluation = np.load(Path(evaluation_folder) / "metrics.npz", allow_pickle=False)
+            with np.load(Path(evaluation_folder) / "metrics.npz", allow_pickle=False) as npz:
+                self.evaluation = {key: npz[key] for key in npz.files}
             summary = Path(evaluation_folder) / "metrics.json"
             self.evaluation_summary = json.loads(summary.read_text()) if summary.exists() else None
             slots = self.evaluation["frame_index"]
@@ -114,7 +117,7 @@ class TakeData:
         self._cache_frames = cache_frames
 
     def _guess_masks(self, skeleton) -> None:
-        self.guessed = self.data["guessed"] if "guessed" in self.data.files else None
+        self.guessed = self.data["guessed"] if "guessed" in self.data else None
         self.limb_masks = []
         if self.guessed is None or self.guessed.size == 0:
             return
@@ -184,7 +187,7 @@ class TakeData:
         key = MODE_SCALES[mode][0]
         if key is None:
             slot = self.evaluation_slot.get(int(self.frame_index[k]))
-            if slot is None or "frame_error_mm" not in self.evaluation.files:
+            if slot is None or "frame_error_mm" not in self.evaluation:
                 return np.full(len(self.labels), np.nan)
             return self.evaluation["frame_error_mm"][slot].astype(np.float64) / 1000.0
         values = np.asarray(self.evaluation[key], dtype=np.float64)
@@ -233,7 +236,7 @@ class TakeData:
         """Per-frame curves for plotting: time, violation and unexplained shares (evaluation), and the
         median point-to-body distance of the tracker (motion.npz)."""
         out = {"time": self.motion.times - self.motion.times[0]}
-        if "residual_median" in self.data.files:
+        if "residual_median" in self.data:
             out["residual_median_mm"] = 1000.0 * np.asarray(self.data["residual_median"], dtype=np.float64)
         if self.evaluation is not None:
             counts = self.evaluation["class_counts"].astype(np.float64)

@@ -111,9 +111,11 @@ def evaluate_take(motion_path, segment_folder, avatar_path, model_path=None,
     from bodyscan.sensors.image import cast
     c = config or TakeEvaluationConfig()
     classify_config = ClassifyConfig(c.sigma_factor, c.min_tolerance, c.max_error)
-    data = np.load(motion_path, allow_pickle=False)
+    # Copy the arrays and close the file: an open npz would lock it on Windows for the whole evaluation.
+    with np.load(motion_path, allow_pickle=False) as npz:
+        data = {key: npz[key] for key in npz.files}
     motion = PoseSequence.load(motion_path)
-    frame_index = data["frame_index"] if "frame_index" in data.files else np.arange(len(motion))
+    frame_index = data["frame_index"] if "frame_index" in data else np.arange(len(motion))
     avatar = Avatar.load(avatar_path)
     model = avatar.model(model_path, "cpu", torch.float64)
     shaped = avatar.shaped(model, c.level)
@@ -189,7 +191,7 @@ def evaluate_take(motion_path, segment_folder, avatar_path, model_path=None,
     distances = np.concatenate(all_distances) if all_distances else np.zeros(0)
     evaluated_index = np.asarray(evaluated)
     times_eval = motion.times[evaluated_index]
-    joints = data["joints"][evaluated_index] if "joints" in data.files else None
+    joints = data["joints"][evaluated_index] if "joints" in data else None
     kinematics = {}
     if joints is not None and len(evaluated) >= 3:
         kinematics = kinematic_metrics(times_eval, joints, motion.root_rotation[evaluated_index],
