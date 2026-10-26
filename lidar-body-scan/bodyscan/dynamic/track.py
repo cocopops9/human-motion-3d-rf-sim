@@ -214,7 +214,9 @@ class TrackConfig:
     hand_pca: str = param("", "SMPL-X .npz holding hands_components and hands_mean (full55); empty: the avatar's "
                               "model file. Its body arrays must equal those of the avatar's model file")
     hand_components: int = param(6, "MANO PCA coefficients per hand (full55): a hand at 2 to 4 m gets a few tens of "
-                                    "points, enough for its opening, spread and thumb, not for single fingers")
+                                    "points, enough for its opening, spread and thumb, not for single fingers; 0: "
+                                    "the hands stay at the mean (relaxed) hand of hand_pca, only the jaw and the eyes "
+                                    "are added")
     hand_prior_weight: float = param(0.002, "weight pulling each hand towards the mean (relaxed) hand [per rad^2 of "
                                             "its 15 joint rotations, summed] (full55)",
                                      effect="larger: hands stay relaxed; smaller: a few stray points bend the fingers")

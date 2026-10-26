@@ -135,6 +135,27 @@ class PoseLayoutTest(unittest.TestCase):
                                    self.hands.mean[1] + 1.5 * self.hands.components[1, 1])
         np.testing.assert_allclose(parts["left_hand"][1].reshape(45), self.hands.mean[0])
 
+    def test_no_hand_components_keeps_the_mean_hands(self):
+        import torch
+        from bodyscan.body.hands import HandPCA
+        from bodyscan.dynamic.fullpose import PoseLayout
+        from bodyscan.dynamic.track import TrackConfig, extra_priors
+        hands = HandPCA.load(self.hands.path, 0)
+        self.assertEqual(hands.components.shape, (2, 0, 45))
+        layout = PoseLayout(self.model, "full55", hands)
+        self.assertEqual(layout.size, 9)                  # jaw and eyes only
+        extra = torch.zeros(2, 9, dtype=torch.float64)
+        extra[1, 0] = 0.1
+        rotations = self.stub(layout)(torch.zeros(2, 21, 3, dtype=torch.float64), extra)
+        expected = self.model.rotations(body=np.zeros((2, 21, 3)), jaw=extra.numpy()[:, :3],
+                                        left_hand=np.tile(hands.mean[0].reshape(15, 3), (2, 1, 1)),
+                                        right_hand=np.tile(hands.mean[1].reshape(15, 3), (2, 1, 1)))
+        torch.testing.assert_close(rotations, expected)
+        parts = layout.split(extra.numpy())
+        self.assertEqual(parts["hand_coefficients"].shape, (2, 2, 0))
+        np.testing.assert_allclose(parts["left_hand"][0].reshape(45), hands.mean[0])
+        self.assertAlmostEqual(float(extra_priors(layout, extra, TrackConfig())), TrackConfig().face_weight * 0.01)
+
     def test_priors_are_zero_at_rest_and_grow_away_from_it(self):
         import torch
         from bodyscan.dynamic.fullpose import PoseLayout
@@ -235,8 +256,9 @@ class FullPoseTrackingTest(unittest.TestCase):
         cls.pca = write_hand_pca_file(cached(), cls.folder.path / "hands.npz")
         cls.start, cls.stop = 20, 26
 
-        def short(pose_model="body21", init="", holdout=0.0):
+        def short(pose_model="body21", init="", holdout=0.0, components=6):
             tracking = TrackPipelineConfig()
+            tracking.tracking.hand_components = components
             tracking.tracking.rounds, tracking.tracking.iterations = 2, 8
             tracking.refine.rounds, tracking.refine.iterations, tracking.refine.window = 1, 6, 10
             tracking.tracking.pose_model, tracking.tracking.hand_pca = pose_model, str(cls.pca)
@@ -251,6 +273,8 @@ class FullPoseTrackingTest(unittest.TestCase):
         cls.full55 = run_tracking(cls.segments, cls.avatar, cls.folder.path / "full55.npz",
                                   short("full55", warm, 0.2), start=cls.start, stop=cls.stop,
                                   joints_csv=cls.folder.path / "joints.csv")
+        cls.full55_k0 = run_tracking(cls.segments, cls.avatar, cls.folder.path / "full55_k0.npz",
+                                     short("full55", warm, 0.2, components=0), start=cls.start, stop=cls.stop)
 
     @classmethod
     def tearDownClass(cls):
@@ -292,6 +316,13 @@ class FullPoseTrackingTest(unittest.TestCase):
         table = np.loadtxt(self.folder.path / "joints.csv", delimiter=",", skiprows=1)
         self.assertEqual(table.shape, (frames, 1 + 55 * 3))
         np.testing.assert_allclose(table[:, 1:4], data["joints"][:, 0], atol=1e-4)
+
+    def test_full55_without_hand_components_fits_jaw_and_eyes_only(self):
+        with np.load(self.folder.path / "full55_k0.npz", allow_pickle=False) as data:
+            self.assertEqual(data["extra"].shape[1], 9)
+            self.assertEqual(data["hand_coefficients"].shape[2], 0)
+            np.testing.assert_allclose(data["left_hand"][0], data["left_hand"][-1])
+        self.assertEqual(self.full55_k0["hand_components"], 0)
 
     def test_body21_motion_keeps_its_old_keys_only(self):
         with np.load(self.folder.path / "body21.npz", allow_pickle=False) as data:

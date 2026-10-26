@@ -69,7 +69,7 @@ def compare_body_arrays(path_a, path_b, tolerance: float = 0.0) -> list[str]:
 
 @dataclass
 class HandPCA:
-    """The first 'count' MANO components of both hands.
+    """The first 'count' MANO components of both hands (count 0: the hands stay at the mean hand).
 
     components  (2, K, 45) rows of hands_components (left, right), radians per unit coefficient
     mean        (2, 45) relaxed hand pose (axis-angle of the 15 joints, flattened)
@@ -105,7 +105,7 @@ class HandPCA:
         mean = np.stack([arrays["hands_meanl"].reshape(45), arrays["hands_meanr"].reshape(45)])
         if components.ndim != 3 or components.shape[2] != 45:
             raise SystemExit(f"{path}: hand components of shape {components.shape[1:]}, expected (n, 45)")
-        if not 1 <= count <= components.shape[1]:
+        if not 0 <= count <= components.shape[1]:
             raise SystemExit(f"{count} hand components asked, {path} has {components.shape[1]}")
         return cls(components[:, :count].astype(np.float64), mean.astype(np.float64), str(path), file_sha1(path))
 
