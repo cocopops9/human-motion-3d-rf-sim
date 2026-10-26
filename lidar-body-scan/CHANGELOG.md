@@ -5,8 +5,9 @@
 Added (ADR 0002; not validated on recorded takes yet):
 
 - `track --pose-model full55`: the jaw, both eyes and both hands are fitted too, the hands with 6 MANO
-  PCA coefficients each (`tracking.hand_components`) read from `--hand-pca` (an SMPL-X file whose body
-  arrays must equal those of the avatar's model file); strong prior of the jaw and eyes towards rest
+  PCA coefficients each (`tracking.hand_components`) read from `--hand-pca` (an SMPL-X file compatible
+  with the avatar's model file: same mesh, pose correctives, regressor, skinning weights and tree, template
+  differences at least 0.30 m from the hands; the check's numbers and both sha1 go into motion.json); strong prior of the jaw and eyes towards rest
   (`face_weight`), prior of the hands towards the mean hand (`hand_prior_weight`), their smoothness in
   stage 2 (`refine.extra_smoothness`). Default `body21`: the 1.7.1 tracker unchanged (checked: identical motion on a synthetic take).
 - `track --init-motion`: warm start from an earlier motion (every frame from its pose there, no

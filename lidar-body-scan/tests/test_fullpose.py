@@ -77,6 +77,74 @@ class HandPCATest(unittest.TestCase):
             HandPCA.load(self.pca, 46)
 
 
+def synthetic_model(seed: int = 0) -> dict:
+    """Arrays shaped like an SMPL-X file on 60 vertices, no SMPL-X data: joint k is vertex k, the hand joints
+    (20, 21, 25 to 54) lie within 0.1 m of (0, 1, 0) and vertices 55 to 59 near the top of the head (y 1.7)."""
+    rng = np.random.default_rng(seed)
+    template = rng.normal(0.0, 0.05, (60, 3)) + [0.0, 1.0, 0.0]
+    template[55:] = rng.normal(0.0, 0.02, (5, 3)) + [0.0, 1.7, 0.0]
+    regressor = np.zeros((55, 60))
+    regressor[np.arange(55), np.arange(55)] = 1.0
+    parents = np.concatenate([[-1], np.arange(54)]).astype(np.int64)
+    arrays = {"v_template": template, "f": rng.integers(0, 60, (40, 3)), "posedirs": rng.normal(size=(60, 3, 486)),
+              "J_regressor": regressor, "weights": rng.random((60, 55)),
+              "kintree_table": np.stack([parents, np.arange(55)])}
+    for side in ("l", "r"):
+        arrays[f"hands_components{side}"] = rng.normal(size=(45, 45))
+        arrays[f"hands_mean{side}"] = rng.normal(size=45)
+    return arrays
+
+
+class CompatibilityTest(unittest.TestCase):
+    """check_compatibility on synthetic arrays: which differences between the body file and the hand file
+    are allowed."""
+
+    def test_identical_files_are_compatible(self):
+        from bodyscan.body.hands import check_compatibility
+        model = synthetic_model()
+        report = check_compatibility(model, dict(model))
+        self.assertTrue(report["compatible"], report["errors"])
+        self.assertEqual(report["differing_template_vertices"], 0)
+        self.assertIsNone(report["min_hand_distance_m"])
+
+    def test_root_parent_as_uint32_and_a_far_template_change_are_allowed(self):
+        from bodyscan.body.hands import check_compatibility
+        body, hands = synthetic_model(), synthetic_model()
+        hands["kintree_table"] = body["kintree_table"].astype(np.uint32)       # root parent 4294967295
+        hands["v_template"] = body["v_template"].copy()
+        hands["v_template"][57, 1] += 0.008                                   # 8 mm on the head
+        report = check_compatibility(body, hands)
+        self.assertTrue(report["compatible"], report["errors"])
+        self.assertEqual(report["differing_template_vertices"], 1)
+        self.assertAlmostEqual(report["max_template_difference_mm"], 8.0, places=6)
+        self.assertGreater(report["min_hand_distance_m"], 0.30)
+
+    def test_template_change_near_a_hand_fails(self):
+        from bodyscan.body.hands import check_compatibility
+        body, hands = synthetic_model(), synthetic_model()
+        hands["v_template"] = body["v_template"].copy()
+        hands["v_template"][[30, 57], 0] += 0.002                             # a finger joint's vertex and the head
+        report = check_compatibility(body, hands)
+        self.assertFalse(report["compatible"])
+        self.assertEqual(report["differing_template_vertices"], 2)
+        self.assertLess(report["min_hand_distance_m"], 0.30)
+
+    def test_other_arrays_must_be_equal_and_hands_well_shaped(self):
+        from bodyscan.body.hands import check_compatibility
+        body = synthetic_model()
+        for key, value in (("weights", body["weights"] + 1e-9), ("posedirs", body["posedirs"][:, :, :-1]),
+                           ("J_regressor", np.roll(body["J_regressor"], 1, axis=1)), ("f", body["f"][::-1]),
+                           ("kintree_table", np.roll(body["kintree_table"], 1, axis=1)),
+                           ("hands_componentsl", body["hands_componentsl"][:12]),
+                           ("hands_meanr", body["hands_meanr"][:44])):
+            report = check_compatibility(body, {**body, key: value})
+            self.assertFalse(report["compatible"], key)
+            self.assertTrue(any(key in error for error in report["errors"]), (key, report["errors"]))
+        missing = dict(body)
+        del missing["hands_meanl"]
+        self.assertFalse(check_compatibility(body, missing)["compatible"])
+
+
 @needs_torch
 class PoseLayoutTest(unittest.TestCase):
     @classmethod
@@ -307,6 +375,10 @@ class FullPoseTrackingTest(unittest.TestCase):
         self.assertEqual(str(data["hand_pca_sha1"]), file_sha1(self.pca))
         self.assertEqual(str(data["model_sha1"]), json.loads(str(data["summary"]))["model_sha1"])
         self.assertEqual(str(data["init_motion_sha1"]), file_sha1(self.folder.path / "base.npz"))
+        check = json.loads((self.folder.path / "full55.json").read_text())["hand_pca_compatibility"]
+        self.assertTrue(check["compatible"])
+        self.assertEqual(check["hand_file_sha1"], file_sha1(self.pca))
+        self.assertEqual(json.loads(str(data["hand_pca_compatibility"])), check)
         # the strong prior keeps the jaw and the eyes near rest: the sensor cannot see them
         self.assertLess(float(np.max(data["jaw_deg"])), 5.0)
         self.assertLess(float(np.max(data["eye_deg"])), 5.0)

@@ -212,7 +212,8 @@ class TrackConfig:
                                       "jaw, both eyes and both hands, the hands in the MANO PCA space of hand_pca; "
                                       "bodyscan.dynamic.fullpose)", choices=("body21", "full55"))
     hand_pca: str = param("", "SMPL-X .npz holding hands_components and hands_mean (full55); empty: the avatar's "
-                              "model file. Its body arrays must equal those of the avatar's model file")
+                              "model file. It must be compatible with the avatar's model file "
+                              "(bodyscan.body.hands.check_compatibility)")
     hand_components: int = param(6, "MANO PCA coefficients per hand (full55): a hand at 2 to 4 m gets a few tens of "
                                     "points, enough for its opening, spread and thumb, not for single fingers; 0: "
                                     "the hands stay at the mean (relaxed) hand of hand_pca, only the jaw and the eyes "
@@ -2135,8 +2136,9 @@ def quality_summary(quality: dict, config: TrackPipelineConfig) -> dict:
 
 def pose_outputs(layout, result: dict) -> tuple[dict, dict]:
     """The arrays of the extra pose for motion.npz (full55: jaw, eyes, hand coefficients, the hand
-    rotations as PoseSequence reads them, rotation magnitudes, the hand PCA file and its sha1) and their
-    summary (rotation magnitudes of the jaw and eyes [deg]); empty for body21."""
+    rotations as PoseSequence reads them, rotation magnitudes, the hand PCA file, its sha1 and its
+    compatibility with the body model) and their summary (rotation magnitudes of the jaw and eyes [deg]);
+    empty for body21."""
     if layout is None or layout.size == 0:
         return {}, {"pose_model": "body21"}
     parts = layout.split(result["extra"])
@@ -2144,9 +2146,11 @@ def pose_outputs(layout, result: dict) -> tuple[dict, dict]:
               "hand_coefficients": parts["hand_coefficients"], "left_hand": parts["left_hand"],
               "right_hand": parts["right_hand"], "jaw_deg": parts["jaw_deg"], "eye_deg": parts["eye_deg"],
               "hand_pca_file": str(layout.hands.path), "hand_pca_sha1": layout.hands.sha1,
-              "hand_components": np.int64(layout.hand_count)}
+              "hand_components": np.int64(layout.hand_count),
+              "hand_pca_compatibility": json.dumps(layout.hands.compatibility)}
     summary = {"pose_model": "full55", "hand_components": layout.hand_count, "hand_pca_file": str(layout.hands.path),
-               "hand_pca_sha1": layout.hands.sha1, "jaw_deg": _spread(parts["jaw_deg"]),
+               "hand_pca_sha1": layout.hands.sha1, "hand_pca_compatibility": layout.hands.compatibility,
+               "jaw_deg": _spread(parts["jaw_deg"]),
                "left_eye_deg": _spread(parts["eye_deg"][:, 0]), "right_eye_deg": _spread(parts["eye_deg"][:, 1])}
     return arrays, summary
 
@@ -2275,6 +2279,11 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
     if layout.size:
         info(f"  hands: {layout.hand_count} PCA coefficients each from {layout.hands.path} (sha1 "
              f"{layout.hands.sha1[:10]}); body model {model.path} (sha1 {model.sha1[:10]})")
+        check = layout.hands.compatibility
+        if check and check["differing_template_vertices"]:
+            info(f"  hand file compatible with the body model: {check['differing_template_vertices']} template "
+                 f"vertices differ (largest {check['max_template_difference_mm']:.1f} mm), the nearest "
+                 f"{check['min_hand_distance_m']:.3f} m from a hand joint in the rest pose")
     provenance = {}
     warm = None
     if config.tracking.init_motion:
