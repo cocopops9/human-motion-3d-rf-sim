@@ -340,7 +340,13 @@ class Track(ConfiguredCommand):
     segmented first into <out>_segments). Writes <out>.npz (the motion: times,
     root, joint rotations, joints, foot contacts, observed fraction per body
     part, quality per frame) and <out>.json (summary). Needs PyTorch;
-    uses the GPU when there is one."""
+    uses the GPU when there is one.
+
+    All 55 joints (jaw, eyes and hands too), warm-started from an earlier motion, with 20 % of the
+    points held out to measure the fit:
+
+        python -m bodyscan track walk01_seg --avatar s02_avatar.npz --out walk01_full55 --pose-model full55
+            --hand-pca SMPLX_MALE_v11.npz --init-motion walk01_motion.npz --holdout-fraction 0.2"""
     name = "track"
     help = "fit the avatar to every frame of a moving person"
 
@@ -356,6 +362,7 @@ class Track(ConfiguredCommand):
         parser.add_argument("--model", default=None, help="model file, if it moved since the avatar was fitted")
         parser.add_argument("--start", type=int, default=0, help="first segmented frame")
         parser.add_argument("--stop", type=int, default=None, help="last segmented frame (excluded)")
+        parser.add_argument("--joints-csv", default=None, help="also write the joint tracks to this .csv")
         self.add_config_arguments(parser)
 
     def run(self, args):
@@ -371,7 +378,7 @@ class Track(ConfiguredCommand):
             info(f"segmenting {folder} into {segments}")
             MotionSegmenter(NpzRecording(folder)).run(segments)
             folder = segments
-        run_tracking(folder, args.avatar, args.out, config, args.model, args.start, args.stop)
+        run_tracking(folder, args.avatar, args.out, config, args.model, args.start, args.stop, args.joints_csv)
         return 0
 
 
@@ -424,12 +431,15 @@ class ReviewMotion(Command):
         parser.add_argument("--every", type=int, default=2, help="frame step of the GIF")
         parser.add_argument("--frames", type=int, nargs="*", default=None, help="tracked frames to draw as PNG")
         parser.add_argument("--model", default=None)
+        parser.add_argument("--focus", choices=("body", "hands"), default="body",
+                            help="body: the whole body from the LiDAR and from the side; hands: close-ups of both hands")
         parser.add_argument("--quiet", action="store_true")
 
     def run(self, args):
         set_quiet(args.quiet)
         from bodyscan.dynamic.review import review
-        review(args.motion, args.segments, args.avatar, args.out, args.every, args.frames, model_path=args.model)
+        review(args.motion, args.segments, args.avatar, args.out, args.every, args.frames, model_path=args.model,
+               focus=args.focus)
         return 0
 
 

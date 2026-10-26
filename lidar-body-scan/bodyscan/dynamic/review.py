@@ -8,6 +8,10 @@ not drawn. In the side view, a limb that the tracker completed from its
 partner on the other side (the sensor did not see it) is pale violet. A strip at the top gives the time, the frame number and the
 flags of the tracker (free space, sliding, ...).
 
+With focus "hands" the two views are close-ups of the left and the right hand
+(0.4 m across, centred on the middle knuckle), both seen from the LiDAR, and
+the strip gives the median distance of the points near each hand.
+
 Output: review_XXXXX.png for the chosen frames (flagged ones first) and
 review.gif with every 'every'-th frame (needs Pillow; without it only the
 PNG files are written).
@@ -106,9 +110,16 @@ def _label(image, lines):
     return np.asarray(picture)
 
 
+HAND_HALF_SIZE = 0.2          # half the width and height of a hand close-up [m]
+
+
 def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames=None, pixels: int = 320,
-           model_path=None) -> list[Path]:
+           model_path=None, focus: str = "body") -> list[Path]:
     import torch
+    from bodyscan.body import skeleton
+    if focus not in ("body", "hands"):
+        raise ValueError(f"unknown review focus {focus!r} (body or hands)")
+    knuckles = [skeleton.JOINT["left_middle1"], skeleton.JOINT["right_middle1"]]
     from bodyscan.dynamic.avatar import Avatar
     from bodyscan.dynamic.fitting import closest_points
     from bodyscan.dynamic.motions import PoseSequence
@@ -132,7 +143,6 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
     guessed = data["guessed"] if "guessed" in data.files else None
     limb_vertices = []
     if guessed is not None:
-        from bodyscan.body import skeleton
         labels = skeleton.part_labels(shaped.weights.detach().cpu().numpy())
         for limb in [str(n) for n in data["guessed_limbs"]]:
             side, kind = limb.split("_")
@@ -143,7 +153,7 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
     written, gif_frames = [], []
     for k in sorted(set(chosen) | set(flagged[:50])):
         part = motion.subset(slice(k, k + 1))
-        vertices, _ = part.posed(shaped)
+        vertices, joints = part.posed(shaped)
         vertices = vertices[0].astype(np.float64)
         person = segmented.load(by_index[int(frame_index[k])]) if int(frame_index[k]) in by_index else None
         points = person.points if person is not None else np.zeros((0, 3))
@@ -156,16 +166,31 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
             for limb, members in enumerate(limb_vertices):
                 if guessed[k, limb] > 0.5:
                     tinted |= members
-        views = [render(vertices, shaped.faces_np, points, residual, center, toward, pixels=pixels),
-                 render(vertices, shaped.faces_np, points, residual, center, np.array([-toward[1], toward[0]]),
-                        pixels=pixels, tinted=tinted)]
-        image = np.concatenate(views, axis=1)
         active = [names[b] for b in range(len(names)) if flags[k] >> b & 1]
-        lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
-                 f"left: from the LiDAR, right: from the side",
-                 "flags: " + (", ".join(active) if active else "none") +
-                 (f"   points to body median {1000 * np.median(residual):.0f} mm" if len(residual) else "")
-                 + ("   violet: guessed from the other side" if tinted is not None and tinted.any() else "")]
+        if focus == "hands":
+            views, notes = [], []
+            for side, joint in zip(("left", "right"), knuckles):
+                hand = joints[0, joint].astype(np.float64)
+                near = np.linalg.norm(points - hand, axis=1) < HAND_HALF_SIZE if len(points) else np.zeros(0, bool)
+                views.append(render(vertices, shaped.faces_np, points, residual, hand, hand[:2] - sensor[:2],
+                                    half_width=HAND_HALF_SIZE, half_height=HAND_HALF_SIZE, pixels=pixels,
+                                    tinted=tinted))
+                notes.append(f"{side} hand: {int(near.sum())} points" +
+                             (f", median {1000 * np.median(residual[near]):.0f} mm" if near.any() else ""))
+            image = np.concatenate(views, axis=1)
+            lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
+                     f"left and right hand from the LiDAR ({200 * HAND_HALF_SIZE:.0f} cm across)",
+                     "   ".join(notes) + "   flags: " + (", ".join(active) if active else "none")]
+        else:
+            views = [render(vertices, shaped.faces_np, points, residual, center, toward, pixels=pixels),
+                     render(vertices, shaped.faces_np, points, residual, center, np.array([-toward[1], toward[0]]),
+                            pixels=pixels, tinted=tinted)]
+            image = np.concatenate(views, axis=1)
+            lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
+                     f"left: from the LiDAR, right: from the side",
+                     "flags: " + (", ".join(active) if active else "none") +
+                     (f"   points to body median {1000 * np.median(residual):.0f} mm" if len(residual) else "")
+                     + ("   violet: guessed from the other side" if tinted is not None and tinted.any() else "")]
         image = _label(image, lines)
         if k in chosen:
             gif_frames.append(image)

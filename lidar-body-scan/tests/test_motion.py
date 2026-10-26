@@ -837,11 +837,11 @@ class TurnLimitTest(unittest.TestCase):
         def run(true_yaw):
             # a stand-in for the fit: started within 60 deg of the true facing it finds it, otherwise it
             # stays where it started; the score grows with the error of the facing
-            def fit_frame(data, reference, position, body, prediction):
+            def fit_frame(data, reference, position, body, prediction, extra=None):
                 start = Tracker.yaw(reference)
                 error = np.angle(np.exp(1j * (true_yaw[data] - start)))
                 yaw = true_yaw[data] if abs(error) < np.radians(60.0) else start
-                return rotation_z_np(yaw), position, body, 0.0, None
+                return rotation_z_np(yaw), position, body, 0.0, None, np.zeros(0)
 
             def explain(rotation, position, body, data):
                 error = abs(np.angle(np.exp(1j * (true_yaw[data] - Tracker.yaw(rotation)))))
@@ -850,7 +850,9 @@ class TurnLimitTest(unittest.TestCase):
             from bodyscan.dynamic.track import Tracker, TrackPipelineConfig
             stub = SimpleNamespace(config=TrackPipelineConfig(), segmented=SimpleNamespace(load=lambda slot: slot),
                                    geometry=None, device=None, dtype=None, predict=Tracker.predict, yaw=Tracker.yaw,
-                                   fit_frame=fit_frame, explain=explain)
+                                   fit_frame=fit_frame, explain=explain, extra_of=Tracker.extra_of,
+                                   load_frame=lambda slot: slot,
+                                   explain_fit=lambda fitted, data: explain(fitted[0], fitted[1], fitted[2], data))
             # the track so far faced 0 deg in every frame; the facing check at 1.0 s finds 180 deg
             rotations = [rotation_z_np(0.0) for _ in times]
             positions = [np.zeros(3) for _ in times]

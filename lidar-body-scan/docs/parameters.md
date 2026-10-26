@@ -753,6 +753,15 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--joint-speed-scale` | `1.0` | scale of the fastest rotation each joint may make between two frames (bodyscan.body.anatomy.SPEED_LIMITS: 400 deg/s for each spine joint, 600 for the collars, 1000 to 1500 for the limbs); a faster change is spread over the frames around it. Raise it for throwing or kicking; 0: no limit | 0 (version 1.5): single frames where a joint jumped by 30 to 110 deg and back, in up to 3.6 % of the frames of the s02 takes |
 | `--penetration-weight` | `2.0` | weight keeping the arms out of the trunk: a vertex of a forearm, a hand or the lower half of an upper arm deeper than penetration_margin inside the trunk is pushed out (stage 1 and 2; summed over the vertices inside, per ten of them) | 0: an arm the sensor does not see can sink into the trunk (version 1.4); version 1.5 averaged over all the arm samples, so that a forearm 5 cm inside cost little (s02 takes: arms more than 2 cm inside in 15 to 50 % of the frames) |
 | `--penetration-margin` | `0.01` m | depth of an arm inside the trunk that is not penalised (soft tissue, clothes, an avatar slightly wider than the person) | 0.02 (version 1.5): arms visibly inside the trunk |
+| `--pose-model` | `body21` | joints the tracker fits: body21 (the root and the 21 body joints; jaw and eyes at rest, hands at the mean hand of the model file) or full55 (also the jaw, both eyes and both hands, the hands in the MANO PCA space of hand_pca; bodyscan.dynamic.fullpose) |  |
+| `--hand-pca` | `` | SMPL-X .npz holding hands_components and hands_mean (full55); empty: the avatar's model file. Its body arrays must equal those of the avatar's model file |  |
+| `--hand-components` | `6` | MANO PCA coefficients per hand (full55): a hand at 2 to 4 m gets a few tens of points, enough for its opening, spread and thumb, not for single fingers |  |
+| `--hand-prior-weight` | `0.002` | weight pulling each hand towards the mean (relaxed) hand [per rad^2 of its 15 joint rotations, summed] (full55) | larger: hands stay relaxed; smaller: a few stray points bend the fingers |
+| `--face-weight` | `10.0` | weight pulling the jaw and the eyes towards rest [per rad^2] (full55): the LiDAR cannot see them, so they move only where the points insist |  |
+| `--init-motion` | `` | motion .npz to start from (warm start): stage 1 fits every frame from that frame's pose in the file (same frame_index), without the initialisation and the searches of a fresh track; empty: track from scratch |  |
+| `--holdout-fraction` | `0.0` | fraction of every frame's points held out of the fit (at random, the same points in every run with the same seed), to measure the fit on points it did not use; their pixels count as unknown (neither free space nor a measured surface) |  |
+| `--holdout-seed` | `0` | seed of the held-out points (with the frame index) |  |
+| `--hand-radius` | `0.12` m | points within this distance of the middle knuckle of a hand count as near the hand in the quality numbers (the knuckle of the warm-start pose with init_motion, so that every run counts the same points) |  |
 
 ### [refine]
 
@@ -775,6 +784,7 @@ Whole-sequence refinement (stage 2): natural motion.
 | `--contact-speed` | `0.35` m/s | ... and its ankle moves slower than this |  |
 | `--skating-weight` | `2.0` | weight of the no-sliding of feet on the floor |  |
 | `--rolling-shutter` | `True` | compare every point with the body at the time it was measured |  |
+| `--extra-smoothness` | `1.0` | weight of the smoothness of the jaw, eye and hand rotations (full55): their squared second differences between frames [rad^2], per frame |  |
 
 ### [coupling]
 

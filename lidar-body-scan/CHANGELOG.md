@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (branch feature/full-pose-55): all 55 joints in the tracker
+
+Added (ADR 0002; not validated on recorded takes yet):
+
+- `track --pose-model full55`: the jaw, both eyes and both hands are fitted too, the hands with 6 MANO
+  PCA coefficients each (`tracking.hand_components`) read from `--hand-pca` (an SMPL-X file whose body
+  arrays must equal those of the avatar's model file); strong prior of the jaw and eyes towards rest
+  (`face_weight`), prior of the hands towards the mean hand (`hand_prior_weight`), their smoothness in
+  stage 2 (`refine.extra_smoothness`). Default `body21`: the 1.7.1 tracker unchanged (checked: identical motion on a synthetic take).
+- `track --init-motion`: warm start from an earlier motion (every frame from its pose there, no
+  searches).
+- `track --holdout-fraction`: a fraction of the points of every frame held out of the fit, and their residual
+  reported, overall and near the hands.
+- Every run reports the points near each hand per frame and the residual near the hands (pooled over
+  the take); `track --joints-csv` writes the joint tracks.
+- `review-motion --focus hands`: close-ups of both hands.
+- `PoseSequence` carries the jaw and the eyes.
+
+Not validated: the prior weights (hand_prior_weight 0.002, face_weight 10) are first guesses.
+
 ## 1.7.1: no file left open on Windows (2026-10-22)
 
 The first run of the fast tests on the recording laptop (Windows, Python 3.14) found two files left

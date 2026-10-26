@@ -40,20 +40,36 @@ GRAVITY = 9.81
 
 @dataclass
 class PoseSequence:
+    """Poses over time: root rotation (T, 3) and position (T, 3) in the world, the 21 body joints
+    (T, 21, 3), and optionally the hands (T, 15, 3 each), the jaw (T, 3) and the eyes (T, 2, 3), all
+    axis-angle; a part left out is at rest (hands: the model's mean hand)."""
     times: np.ndarray
     root_rotation: np.ndarray
     root_position: np.ndarray
     body: np.ndarray
     left_hand: np.ndarray | None = None
     right_hand: np.ndarray | None = None
+    jaw: np.ndarray | None = None
+    eyes: np.ndarray | None = None
+
+    # the optional rotation parts, in the order of the fields
+    OPTIONAL = ("left_hand", "right_hand", "jaw", "eyes")
 
     def __post_init__(self):
         self.times = np.asarray(self.times, dtype=np.float64)
         self.root_rotation = np.asarray(self.root_rotation, dtype=np.float64).reshape(-1, 3)
         self.root_position = np.asarray(self.root_position, dtype=np.float64).reshape(-1, 3)
         self.body = np.asarray(self.body, dtype=np.float64).reshape(-1, skeleton.NUM_BODY_JOINTS, 3)
+        if self.jaw is not None:
+            self.jaw = np.asarray(self.jaw, dtype=np.float64).reshape(-1, 3)
+        if self.eyes is not None:
+            self.eyes = np.asarray(self.eyes, dtype=np.float64).reshape(-1, 2, 3)
         if np.any(np.diff(self.times) <= 0):
             raise ValueError("pose sequence times must increase")
+
+    def _optional(self, change) -> list:
+        """The optional parts, each passed through 'change' (None stays None)."""
+        return [None if getattr(self, name) is None else change(getattr(self, name)) for name in self.OPTIONAL]
 
     def __len__(self) -> int:
         return len(self.times)
@@ -65,22 +81,18 @@ class PoseSequence:
     def sample(self, times) -> "PoseSequence":
         """The sequence at other times (C1 interpolation; held at the ends)."""
         times = np.asarray(times, dtype=np.float64)
-        hands = [None if h is None else interpolate_rotations(self.times, h, times)
-                 for h in (self.left_hand, self.right_hand)]
         return PoseSequence(times, interpolate_rotations(self.times, self.root_rotation, times),
                             interpolate_positions(self.times, self.root_position, times),
-                            interpolate_rotations(self.times, self.body, times), hands[0], hands[1])
+                            interpolate_rotations(self.times, self.body, times),
+                            *self._optional(lambda values: interpolate_rotations(self.times, values, times)))
 
     def subset(self, mask) -> "PoseSequence":
-        def pick(values):
-            return None if values is None else values[mask]
-
         return PoseSequence(self.times[mask], self.root_rotation[mask], self.root_position[mask], self.body[mask],
-                            pick(self.left_hand), pick(self.right_hand))
+                            *self._optional(lambda values: values[mask]))
 
     def shifted(self, seconds: float) -> "PoseSequence":
         return PoseSequence(self.times + seconds, self.root_rotation, self.root_position, self.body,
-                            self.left_hand, self.right_hand)
+                            *self._optional(lambda values: values))
 
     def root_matrices(self) -> np.ndarray:
         return axis_angle_to_matrix_np(self.root_rotation)
@@ -89,12 +101,12 @@ class PoseSequence:
         """The same motion turned by 'angle' radians about the vertical axis through the origin."""
         turn = rotation_z_np(angle)
         return PoseSequence(self.times, matrix_to_axis_angle_np(turn @ self.root_matrices()),
-                            self.root_position @ turn.T, self.body, self.left_hand, self.right_hand)
+                            self.root_position @ turn.T, self.body, *self._optional(lambda values: values))
 
     def rotations(self, model):
         """(T, 55, 3, 3) joint rotations for bodyscan.body.model (torch)."""
-        return model.rotations(body=self.body, left_hand=self.left_hand, right_hand=self.right_hand,
-                               count=len(self))
+        return model.rotations(body=self.body, jaw=self.jaw, eyes=self.eyes, left_hand=self.left_hand,
+                               right_hand=self.right_hand, count=len(self))
 
     def posed(self, shaped, batch: int = 256, subset=None, dtype=np.float32):
         """World vertices (T, V, 3) and joints (T, 55, 3) as numpy arrays of 'dtype'
@@ -114,30 +126,29 @@ class PoseSequence:
     def save(self, path, **extra) -> None:
         arrays = {"times": self.times, "root_rotation": self.root_rotation, "root_position": self.root_position,
                   "body": self.body}
-        if self.left_hand is not None:
-            arrays["left_hand"] = self.left_hand
-        if self.right_hand is not None:
-            arrays["right_hand"] = self.right_hand
+        for name in self.OPTIONAL:
+            if getattr(self, name) is not None:
+                arrays[name] = getattr(self, name)
         arrays.update(extra)
         np.savez_compressed(path, **arrays)
 
     @classmethod
     def load(cls, path) -> "PoseSequence":
-        data = np.load(path, allow_pickle=False)
-        return cls(data["times"], data["root_rotation"], data["root_position"], data["body"],
-                   data["left_hand"] if "left_hand" in data.files else None,
-                   data["right_hand"] if "right_hand" in data.files else None)
+        with np.load(path, allow_pickle=False) as data:
+            return cls(data["times"], data["root_rotation"], data["root_position"], data["body"],
+                       *[data[name] if name in data.files else None for name in cls.OPTIONAL])
 
 
 def concatenate(parts: list[PoseSequence]) -> PoseSequence:
-    """Sequences one after the other (each must start after the previous one ends)."""
-    hands = []
-    for side in ("left_hand", "right_hand"):
-        values = [getattr(p, side) for p in parts]
-        hands.append(None if any(v is None for v in values) else np.concatenate(values))
+    """Sequences one after the other (each must start after the previous one ends); an optional part
+    is kept only if every sequence has it."""
+    optional = []
+    for name in PoseSequence.OPTIONAL:
+        values = [getattr(p, name) for p in parts]
+        optional.append(None if any(v is None for v in values) else np.concatenate(values))
     return PoseSequence(np.concatenate([p.times for p in parts]), np.concatenate([p.root_rotation for p in parts]),
                         np.concatenate([p.root_position for p in parts]), np.concatenate([p.body for p in parts]),
-                        hands[0], hands[1])
+                        *optional)
 
 
 # ----------------------------------------------------------------------------
