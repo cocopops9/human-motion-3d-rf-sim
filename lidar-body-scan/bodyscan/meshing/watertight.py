@@ -152,7 +152,7 @@ def watertight_remesh(mesh, voxel: float, clip_below=None, min_fraction: float =
         sdf[(slice(None),) * axis + (-1,)] = 3.0 * voxel
     vertices, faces = marching_cubes(sdf, voxel)
     result = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(vertices + lower),
-                                       o3d.utility.Vector3iVector(faces))
+                                       o3d.utility.Vector3iVector(faces.astype(np.int32)))
     labels, sizes, _ = result.cluster_connected_triangles()
     labels, sizes = np.asarray(labels), np.asarray(sizes)
     result.remove_triangles_by_mask(sizes[labels] < min_fraction * len(result.triangles))
@@ -161,5 +161,5 @@ def watertight_remesh(mesh, voxel: float, clip_below=None, min_fraction: float =
     # Outward orientation: the signed volume of a closed surface is positive.
     v, f = np.asarray(result.vertices), np.asarray(result.triangles)
     if np.einsum("ij,ij->i", v[f[:, 0]], np.cross(v[f[:, 1]], v[f[:, 2]])).sum() < 0:
-        result.triangles = o3d.utility.Vector3iVector(f[:, ::-1].copy())
+        result.triangles = o3d.utility.Vector3iVector(f[:, ::-1].astype(np.int32))
     return result

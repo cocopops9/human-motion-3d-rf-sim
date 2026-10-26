@@ -227,7 +227,7 @@ def surface(voxel: float = 0.004, target_triangles: int = 20000):
         sdf[(slice(None),) * axis + (-1,)] = 1.0
     sdf[np.abs(sdf) < 1e-7] = 1e-7
     vertices, faces = marching_cubes(sdf, voxel)
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(vertices + lower), o3d.utility.Vector3iVector(faces))
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(vertices + lower), o3d.utility.Vector3iVector(faces.astype(np.int32)))
     mesh = mesh.simplify_quadric_decimation(target_triangles)
     mesh.remove_duplicated_vertices()
     from bodyscan.meshing.smoothing import tangential_relaxation      # better shaped triangles
