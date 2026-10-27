@@ -19,6 +19,8 @@ Added (ADR 0002; not validated on recorded takes yet):
   searches).
 - `track --holdout-fraction`: a fraction of the points of every frame held out of the fit, and their residual
   reported, overall and near the hands.
+- Every run also reports the points within `tracking.finger_radius` (0.06 m) of the 30 finger joints of the
+  warm-start pose (flat fingers) and their residual, fitted and held out (a tighter, secondary measure).
 - Every run reports the points near each hand per frame and the residual near the hands (pooled over
   the take); `track --joints-csv` writes the joint tracks.
 - `review-motion --focus hands`: close-ups of both hands.

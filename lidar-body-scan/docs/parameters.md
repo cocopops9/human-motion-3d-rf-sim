@@ -763,6 +763,7 @@ Fitting the avatar to every frame (stage 1, frame by frame).
 | `--init-motion` | `` | motion .npz to start from (warm start): stage 1 fits every frame from that frame's pose in the file (same frame_index), without the initialisation and the searches of a fresh track; empty: track from scratch |  |
 | `--holdout-fraction` | `0.0` | fraction of every frame's points held out of the fit (at random, the same points in every run with the same seed), to measure the fit on points it did not use; their pixels count as unknown (neither free space nor a measured surface) |  |
 | `--holdout-seed` | `0` | seed of the held-out points (with the frame index) |  |
+| `--finger-radius` | `0.06` m | points within this distance of any of the 30 finger joints (of the warm-start pose with flat fingers, with init_motion) count as near the fingers: a secondary, tighter neighbourhood of the hands in the quality numbers |  |
 | `--hand-radius` | `0.12` m | points within this distance of the middle knuckle of a hand count as near the hand in the quality numbers (the knuckle of the warm-start pose with init_motion, so that every run counts the same points) |  |
 
 ### [refine]

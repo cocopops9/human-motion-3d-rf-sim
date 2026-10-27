@@ -237,6 +237,10 @@ class TrackConfig:
                                          "did not use; their pixels count as unknown (neither free space nor a "
                                          "measured surface)")
     holdout_seed: int = param(0, "seed of the held-out points (with the frame index)")
+    finger_radius: float = param(0.06, "points within this distance of any of the 30 finger joints (of the "
+                                       "warm-start pose with flat fingers, with init_motion) count as near the "
+                                       "fingers: a secondary, tighter neighbourhood of the hands in the quality "
+                                       "numbers", unit="m")
     hand_radius: float = param(0.12, "points within this distance of the middle knuckle of a hand count as near the "
                                      "hand in the quality numbers (the knuckle of the warm-start pose with "
                                      "init_motion, so that every run counts the same points)", unit="m")
@@ -1941,13 +1945,16 @@ class Tracker:
         return refined
 
     # -- quality ----------------------------------------------------------------------------------
-    def assess(self, result: dict, hand_centers: np.ndarray | None = None) -> dict:
+    def assess(self, result: dict, hand_centers: np.ndarray | None = None,
+               finger_joints: np.ndarray | None = None) -> dict:
         """Per frame: point residual, silhouette violations, observed fraction per body part,
         floor penetration, joint-limit excess; and the joints. Near the hands (within hand_radius of
         hand_centers (F, 2, 3), by default the middle knuckles of the result itself): the number of
         points (all of them, held out or not) and the residual of the fitted points; with held-out
         points (holdout_fraction) their residual too, overall and near the hands. 'pooled' gives the
-        median and 90th percentile of all the distances of each kind over the whole take [m]."""
+        median and 90th percentile of all the distances of each kind over the whole take [m]. With
+        finger_joints (F, 30, 3), the same near the fingers: points within finger_radius of any finger joint
+        (a secondary, tighter neighbourhood of the hands)."""
         import torch
         from bodyscan.body.model import vertex_normals
         from bodyscan.dynamic.fitting import closest_points, visible_faces
@@ -1968,7 +1975,19 @@ class Tracker:
         heldout_p90 = np.full(frames, np.nan)
         heldout_hand_median = np.full(frames, np.nan)
         heldout_hand_points = np.zeros(frames, dtype=np.int64)
-        pooled = {"fit": [], "fit_hands": [], "heldout": [], "heldout_hands": []}
+        finger_points = np.zeros(frames, dtype=np.int64)
+        heldout_finger_points = np.zeros(frames, dtype=np.int64)
+        finger_median = np.full(frames, np.nan)
+        heldout_finger_median = np.full(frames, np.nan)
+        pooled = {"fit": [], "fit_hands": [], "heldout": [], "heldout_hands": [], "fit_fingers": [],
+                  "heldout_fingers": []}
+        finger_radius = self.config.tracking.finger_radius
+
+        def near_fingers(points, joints):
+            """(N,) whether each point lies within finger_radius of any of the finger joints (30, 3)."""
+            if len(points) == 0:
+                return np.zeros(0, dtype=bool)
+            return (np.linalg.norm(points[:, None] - joints[None], axis=2) < finger_radius).any(axis=1)
         radius = self.config.tracking.hand_radius
         knuckles = [skeleton.JOINT["left_middle1"], skeleton.JOINT["right_middle1"]]
 
@@ -2013,6 +2032,12 @@ class Tracker:
                 pooled["fit_hands"].append(distance[fit_near])
                 if fit_near.any():
                     hand_median[k] = np.median(distance[fit_near])
+                if finger_joints is not None:
+                    finger_points[k] = int(near_fingers(frame.all_points_np, finger_joints[k]).sum())
+                    fit_fingers = near_fingers(frame.points_np, finger_joints[k])
+                    pooled["fit_fingers"].append(distance[fit_fingers])
+                    if fit_fingers.any():
+                        finger_median[k] = np.median(distance[fit_fingers])
                 if len(frame.heldout_np):
                     _, _, held = closest_points(v, self.faces_np, frame.heldout_np,
                                                 visible_faces(self.faces_np, match.visible))
@@ -2024,6 +2049,12 @@ class Tracker:
                     heldout_hand_points[k] = int(held_near.sum())
                     if held_near.any():
                         heldout_hand_median[k] = np.median(held[held_near])
+                    if finger_joints is not None:
+                        held_fingers = near_fingers(frame.heldout_np, finger_joints[k])
+                        pooled["heldout_fingers"].append(held[held_fingers])
+                        heldout_finger_points[k] = int(held_fingers.sum())
+                        if held_fingers.any():
+                            heldout_finger_median[k] = np.median(held[held_fingers])
                 reach = self.config.tracking.max_correspondence
                 unexplained[k] = np.mean((distance > 0.05) & (distance < reach))
                 clutter[k] = np.mean(distance >= reach)
@@ -2054,26 +2085,42 @@ class Tracker:
                 "hand_points": hand_points, "hand_residual_median": hand_median,
                 "heldout_residual_median": heldout_median, "heldout_residual_p90": heldout_p90,
                 "heldout_hand_residual_median": heldout_hand_median, "heldout_hand_points": heldout_hand_points,
+                **({"finger_points": finger_points, "finger_residual_median": finger_median,
+                    "heldout_finger_points": heldout_finger_points,
+                    "heldout_finger_residual_median": heldout_finger_median} if finger_joints is not None else {}),
                 "pooled": summary}
 
-    def hand_centers(self, root_matrix: np.ndarray, root_position: np.ndarray, body: np.ndarray,
-                     batch: int = 64) -> np.ndarray:
-        """(F, 2, 3) world positions of the middle knuckles of the left and right hand of poses (the
-        knuckle follows the wrist only, so it is the same whatever the fingers do)."""
+    def hand_joints(self, root_matrix: np.ndarray, root_position: np.ndarray, body: np.ndarray,
+                    batch: int = 64) -> tuple[np.ndarray, np.ndarray]:
+        """World positions [m] of the hand joints of poses (root, body), with the jaw and the eyes at rest
+        and flat fingers (the hands of the 1.6.0 motions), whatever the pose model: (F, 2, 3) the middle
+        knuckles of the left and right hand (they follow the wrist only, so they are the same whatever the
+        fingers do) and (F, 30, 3) the 30 finger joints (SMPL-X joints 25 to 54)."""
         import torch
+        from bodyscan.body.rotations import axis_angle_to_matrix
         knuckles = [skeleton.JOINT["left_middle1"], skeleton.JOINT["right_middle1"]]
-        out = np.zeros((len(body), 2, 3))
+        centers = np.zeros((len(body), 2, 3))
+        fingers = np.zeros((len(body), 30, 3))
         for first in range(0, len(body), batch):
             span = slice(first, min(first + batch, len(body)))
+            count = span.stop - span.start
 
             def tensor(values):
                 return torch.as_tensor(values, dtype=self.dtype, device=self.device)
 
             with torch.no_grad():
-                zero = torch.zeros(span.stop - span.start, 3, dtype=self.dtype, device=self.device)
-                _, joints = self.pose(zero, tensor(root_matrix[span]), tensor(root_position[span]), tensor(body[span]))
-            out[span] = joints[:, knuckles].cpu().numpy()
-        return out
+                head = torch.zeros(count, 1, 3, dtype=self.dtype, device=self.device)
+                rest = torch.zeros(count, 33, 3, dtype=self.dtype, device=self.device)
+                rotations = axis_angle_to_matrix(torch.cat([head, tensor(body[span]), rest], dim=1))
+                joints = self.shaped.pose(rotations, tensor(root_matrix[span]), tensor(root_position[span])).joints
+            centers[span] = joints[:, knuckles].cpu().numpy()
+            fingers[span] = joints[:, 25:55].cpu().numpy()
+        return centers, fingers
+
+    def hand_centers(self, root_matrix: np.ndarray, root_position: np.ndarray, body: np.ndarray,
+                     batch: int = 64) -> np.ndarray:
+        """(F, 2, 3) world positions of the middle knuckles of the left and right hand of poses."""
+        return self.hand_joints(root_matrix, root_position, body, batch)[0]
 
 
 # ----------------------------------------------------------------------------
@@ -2139,9 +2186,14 @@ def quality_summary(quality: dict, config: TrackPipelineConfig) -> dict:
            "hand_points_per_frame": {side: _spread(quality["hand_points"][:, h]) for h, side in
                                      enumerate(("left", "right"))} if "hand_points" in quality else {},
            "hand_radius_m": config.tracking.hand_radius}
+    if "finger_points" in quality:
+        out["finger_residual_pooled"] = mm("fit_fingers")
+        out["finger_points_per_frame"] = _spread(quality["finger_points"])
+        out["finger_radius_m"] = config.tracking.finger_radius
     if config.tracking.holdout_fraction > 0:
         out["heldout"] = {"fraction": config.tracking.holdout_fraction, "seed": config.tracking.holdout_seed,
                           "residual_pooled": mm("heldout"), "hand_residual_pooled": mm("heldout_hands"),
+                          "finger_residual_pooled": mm("heldout_fingers"),
                           "residual_median_mm": float(1000 * np.nanmedian(quality["heldout_residual_median"])),
                           "residual_p90_mm": float(1000 * np.nanmedian(quality["heldout_residual_p90"]))}
     return out
@@ -2202,7 +2254,8 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
     }
     added = {name: quality[name] for name in ("hand_points", "hand_residual_median", "heldout_residual_median",
                                               "heldout_residual_p90", "heldout_hand_residual_median",
-                                              "heldout_hand_points")
+                                              "heldout_hand_points", "finger_points", "finger_residual_median",
+                                              "heldout_finger_points", "heldout_finger_residual_median")
              if name in quality}
     frames = len(result["times"])
     np.savez_compressed(path, times=result["times"], root_rotation=result["root_rotation"],
@@ -2342,14 +2395,15 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
     contacts = tracker.contacts(result)
     # the hands' neighbourhood of the quality numbers: the warm-start pose where there is one, so that runs
     # of different pose models count the same points
-    centers = tracker.hand_centers(result["root_matrix"], result["root_position"], result["body"])
+    centers, fingers = tracker.hand_joints(result["root_matrix"], result["root_position"], result["body"])
     if warm is not None:
         known = [k for k, index in enumerate(result["frame_index"]) if int(index) in warm]
         if known:
             poses = [warm[int(result["frame_index"][k])] for k in known]
-            centers[known] = tracker.hand_centers(np.array([q[0] for q in poses]), np.array([q[1] for q in poses]),
-                                                  np.array([q[2] for q in poses]))
-    quality = tracker.assess(result, centers)
+            centers[known], fingers[known] = tracker.hand_joints(np.array([q[0] for q in poses]),
+                                                                 np.array([q[1] for q in poses]),
+                                                                 np.array([q[2] for q in poses]))
+    quality = tracker.assess(result, centers, fingers)
     flags = flag_frames(quality, contacts, result["times"])
     out = Path(out)
     if out.suffix != ".npz":
