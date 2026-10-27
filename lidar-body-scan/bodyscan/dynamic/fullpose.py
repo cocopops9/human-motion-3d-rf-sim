@@ -12,6 +12,11 @@ model file). With full55 it also fits, per frame, an 'extra' vector:
 so that all 55 joints of SMPL-X move. The extra vector is affine in the joint
 rotations (axis-angle), so its priors and its continuity are written on the
 rotations themselves: radians, comparable with those of the body joints.
+
+With face_fixed the jaw and the eyes stay at rest and are not part of the
+vector (it holds the hand coefficients only), so that the objective is that of
+body21 plus the hand terms: with no hand coefficients and the flat mean hand
+it is the objective of body21.
 """
 
 from __future__ import annotations
@@ -20,16 +25,13 @@ import numpy as np
 
 from bodyscan.body.hands import HandPCA
 
-JAW = slice(0, 3)
-EYES = slice(3, 9)
-FACE = slice(0, 9)
-HANDS_START = 9
+FACE_SIZE = 9          # jaw (3) and eyes (2 x 3) at the start of the vector, unless face_fixed
 
 
 class PoseLayout:
     """Layout of the extra vector of one pose model, on the model's device."""
 
-    def __init__(self, model, pose_model: str = "body21", hands: HandPCA | None = None):
+    def __init__(self, model, pose_model: str = "body21", hands: HandPCA | None = None, face_fixed: bool = False):
         import torch
         if pose_model not in ("body21", "full55"):
             raise ValueError(f"unknown pose model {pose_model!r} (body21 or full55)")
@@ -39,7 +41,10 @@ class PoseLayout:
         self.full = pose_model == "full55"
         self.hands = hands if self.full else None
         self.hand_count = hands.count if self.full else 0
-        self.size = HANDS_START + 2 * self.hand_count if self.full else 0
+        self.face_fixed = bool(face_fixed) and self.full
+        self.face_size = FACE_SIZE if self.full and not self.face_fixed else 0
+        self.face = slice(0, self.face_size)              # jaw then eyes; empty with face_fixed
+        self.size = self.face_size + 2 * self.hand_count if self.full else 0
         self.device, self.dtype = model.device, model.dtype
         if self.full:
             self.components = torch.as_tensor(hands.components, dtype=self.dtype, device=self.device)   # (2, K, 45)
@@ -51,7 +56,7 @@ class PoseLayout:
 
     def coefficients(self, extra):
         """(..., E) -> (..., 2, K) hand coefficients (torch or numpy)."""
-        return extra[..., HANDS_START:].reshape(*extra.shape[:-1], 2, self.hand_count)
+        return extra[..., self.face_size:].reshape(*extra.shape[:-1], 2, self.hand_count)
 
     def hand_offsets(self, extra):
         """(F, E) torch -> (F, 2, 45) hand rotations away from the mean hand [rad]."""
@@ -63,17 +68,21 @@ class PoseLayout:
         import torch
         f = extra.shape[0]
         hands = (self.mean + self.hand_offsets(extra)).reshape(f, 30, 3)
-        return torch.cat([extra[:, FACE].reshape(f, 3, 3), hands], dim=1)
+        face = (torch.zeros(f, 3, 3, dtype=self.dtype, device=self.device) if self.face_fixed
+                else extra[:, self.face].reshape(f, 3, 3))
+        return torch.cat([face, hands], dim=1)
 
     def split(self, extra: np.ndarray) -> dict:
         """(F, E) numpy -> the parts of the pose for the output: jaw (F, 3), eyes (F, 2, 3), hand
         coefficients (F, 2, K), left_hand and right_hand (F, 15, 3) axis-angle, and the rotation
         magnitudes of the jaw (F,) and of each eye (F, 2) [deg]."""
-        extra = np.asarray(extra, dtype=np.float64).reshape(-1, self.size)
+        extra = np.asarray(extra, dtype=np.float64)
+        extra = extra.reshape(1, self.size) if extra.ndim == 1 else extra.reshape(len(extra), self.size)
         coefficients = self.coefficients(extra)
         hands = self.hands.axis_angle_np(coefficients)
-        jaw = extra[:, JAW]
-        eyes = extra[:, EYES].reshape(-1, 2, 3)
+        face = np.zeros((len(extra), FACE_SIZE)) if self.face_fixed else extra[:, self.face]
+        jaw = face[:, 0:3]
+        eyes = face[:, 3:9].reshape(-1, 2, 3)
         return {"jaw": jaw, "eyes": eyes, "hand_coefficients": coefficients, "left_hand": hands[:, 0],
                 "right_hand": hands[:, 1], "jaw_deg": np.degrees(np.linalg.norm(jaw, axis=-1)),
                 "eye_deg": np.degrees(np.linalg.norm(eyes, axis=-1))}

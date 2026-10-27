@@ -235,6 +235,37 @@ class PoseLayoutTest(unittest.TestCase):
         np.testing.assert_allclose(parts["left_hand"][0].reshape(45), hands.mean[0])
         self.assertAlmostEqual(float(extra_priors(layout, extra, TrackConfig())), TrackConfig().face_weight * 0.01)
 
+    def test_fixed_face_leaves_the_vector_and_flat_k0_poses_as_body21(self):
+        import torch
+        from bodyscan.body.hands import HandPCA
+        from bodyscan.dynamic.fullpose import PoseLayout
+        from bodyscan.dynamic.track import TrackConfig, extra_priors
+        layout = PoseLayout(self.model, "full55", self.hands, face_fixed=True)
+        self.assertEqual(layout.size, 12)                 # hand coefficients only
+        extra = np.zeros((2, 12))
+        extra[1, 6 + 1] = 1.5                             # second coefficient of the right hand
+        parts = layout.split(extra)
+        np.testing.assert_array_equal(parts["jaw"], np.zeros((2, 3)))
+        np.testing.assert_allclose(parts["right_hand"][1].reshape(45),
+                                   self.hands.mean[1] + 1.5 * self.hands.components[1, 1])
+        # no hand components, flat mean hand, face fixed: an empty vector and exactly the rotations of body21
+        # with flat hands (the s02 model file has no hands_mean)
+        flat = HandPCA.load(self.hands.path, 0, flat_mean=True)
+        control = PoseLayout(self.model, "full55", flat, face_fixed=True)
+        self.assertEqual(control.size, 0)
+        self.assertTrue(control.full)
+        body = torch.as_tensor(np.random.default_rng(2).normal(0.0, 0.2, (3, 21, 3)))
+        empty = torch.zeros(3, 0, dtype=torch.float64)
+        flat_hands = torch.eye(3, dtype=torch.float64).expand(30, 3, 3)
+        body21 = SimpleNamespace(layout=PoseLayout(self.model, "body21"), dtype=self.model.dtype,
+                                 device=self.model.device, hands=flat_hands)
+        from bodyscan.dynamic.track import Tracker
+        np.testing.assert_array_equal(self.stub(control)(body, empty).numpy(), Tracker.rotations(body21, body).numpy())
+        self.assertEqual(float(extra_priors(control, empty, TrackConfig(), empty)), 0.0)
+        parts = control.split(np.zeros((3, 0)))                # an empty vector per frame splits too
+        np.testing.assert_array_equal(parts["left_hand"], np.zeros((3, 15, 3)))
+        np.testing.assert_array_equal(parts["jaw_deg"], np.zeros(3))
+
     def test_priors_are_zero_at_rest_and_grow_away_from_it(self):
         import torch
         from bodyscan.dynamic.fullpose import PoseLayout

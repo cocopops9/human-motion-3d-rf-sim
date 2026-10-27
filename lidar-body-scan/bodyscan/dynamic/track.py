@@ -224,6 +224,9 @@ class TrackConfig:
     hand_prior_weight: float = param(0.002, "weight pulling each hand towards the mean (relaxed) hand [per rad^2 of "
                                             "its 15 joint rotations, summed] (full55)",
                                      effect="larger: hands stay relaxed; smaller: a few stray points bend the fingers")
+    face_fixed: bool = param(False, "full55: the jaw and the eyes stay at rest and are not fitted (not in the "
+                                    "optimised vector, no face prior); with hand_components 0 and flat_hand_mean "
+                                    "the objective is that of body21 (control runs)")
     face_weight: float = param(10.0, "weight pulling the jaw and the eyes towards rest [per rad^2] (full55): the "
                                      "LiDAR cannot see them, so they move only where the points insist")
     init_motion: str = param("", "motion .npz to start from (warm start): stage 1 fits every frame from that "
@@ -359,13 +362,13 @@ def extra_priors(layout, extra, config, prediction=None, hand_hidden=None) -> ob
     each hand towards the mean hand (hand_prior_weight, on its joint rotations), and with 'prediction'
     ((F, E)) the continuity of stage 1 on the same rotations; hand_hidden (F, 2) multiplies the continuity
     of a hand the sensor hardly sees, as hidden_continuity does for the body joints."""
-    from bodyscan.dynamic.fullpose import FACE
+    face = layout.face                                                      # empty with face_fixed
     offsets = layout.hand_offsets(extra)                                    # (F, 2, 45) [rad]
-    energy = config.face_weight * (extra[:, FACE] ** 2).sum() + config.hand_prior_weight * (offsets ** 2).sum()
+    energy = config.face_weight * (extra[:, face] ** 2).sum() + config.hand_prior_weight * (offsets ** 2).sum()
     if prediction is not None:
         change = offsets - layout.hand_offsets(prediction)
         weight = 1.0 if hand_hidden is None else hand_hidden[..., None]
-        energy = energy + config.pose_continuity * (((extra[:, FACE] - prediction[:, FACE]) ** 2).sum()
+        energy = energy + config.pose_continuity * (((extra[:, face] - prediction[:, face]) ** 2).sum()
                                                     + ((change ** 2) * weight).sum())
     return energy
 
@@ -635,7 +638,7 @@ class Tracker:
             from bodyscan.body.hands import HandPCA
             hands = HandPCA.load(c.hand_pca or model.path, c.hand_components, body_model=model.path,
                                  flat_mean=c.flat_hand_mean)
-        self.layout = PoseLayout(model, c.pose_model, hands)
+        self.layout = PoseLayout(model, c.pose_model, hands, face_fixed=c.face_fixed)
 
     def frame_data(self, person) -> FrameData:
         """A segmented frame on the device, with the points of holdout_fraction held out."""
@@ -653,7 +656,7 @@ class Tracker:
     def extra_tensor(self, result: dict, span):
         """(F, E) torch extra pose of the frames 'span' of a result, None for body21."""
         import torch
-        if self.layout.size == 0:
+        if not self.layout.full:
             return None
         return torch.as_tensor(result["extra"][span], dtype=self.dtype, device=self.device)
 
@@ -665,7 +668,7 @@ class Tracker:
         from bodyscan.body.rotations import axis_angle_to_matrix
         f = body.shape[0]
         head = torch.zeros(f, 1, 3, dtype=self.dtype, device=self.device)
-        if self.layout.size:
+        if self.layout.full:
             if extra is None:
                 extra = torch.zeros(f, self.layout.size, dtype=self.dtype, device=self.device)
             return axis_angle_to_matrix(torch.cat([head, body, self.layout.tail(extra)], dim=1))
@@ -829,7 +832,7 @@ class Tracker:
         rounds = c.rounds if rounds is None else rounds
         iterations = c.iterations if iterations is None else iterations
         dev, dt = self.device, self.dtype
-        full = self.layout.size > 0
+        full = self.layout.full
         reference_t = torch.as_tensor(reference, dtype=dt, device=dev).reshape(1, 3, 3)
         omega = torch.zeros(1, 3, dtype=dt, device=dev, requires_grad=True)
         pos = torch.as_tensor(position, dtype=dt, device=dev).reshape(1, 3).clone().requires_grad_(True)
@@ -848,7 +851,10 @@ class Tracker:
             start = extra if extra is not None else (pred_extra.cpu().numpy() if pred_extra is not None
                                                      else self.layout.neutral())
             e = torch.as_tensor(start, dtype=dt, device=dev).reshape(1, -1).clone().requires_grad_(free_body)
-        tensors = [omega, pos] + ([b] if free_body else []) + ([e] if full and free_body else [])
+        # an empty extra vector (full55 with face_fixed and no hand components) stays out of the optimiser,
+        # so that L-BFGS sees the variables of body21
+        tensors = [omega, pos] + ([b] if free_body else []) + ([e] if full and free_body and self.layout.size
+                                                                else [])
         if joints is not None:
             mask = torch.zeros(1, 21, 1, dtype=dt, device=dev)
             mask[0, list(joints)] = 1.0
@@ -937,7 +943,7 @@ class Tracker:
                                     torch.as_tensor(rotation, dtype=self.dtype, device=self.device)[None],
                                     torch.as_tensor(position, dtype=self.dtype, device=self.device)[None],
                                     torch.as_tensor(body, dtype=self.dtype, device=self.device)[None],
-                                    extra=None if extra is None or self.layout.size == 0 else
+                                    extra=None if extra is None or not self.layout.full else
                                     torch.as_tensor(extra, dtype=self.dtype, device=self.device).reshape(1, -1))
             normals = vertex_normals(vertices, self.faces)
         match = self.match(vertices[0].cpu().numpy().astype(np.float64), normals[0].cpu().numpy().astype(np.float64),
@@ -1758,7 +1764,7 @@ class Tracker:
         reference = result["root_matrix"].copy()
         position = result["root_position"].copy()
         body = result["body"].copy()
-        full = self.layout.size > 0
+        full = self.layout.full
         extra_all = result["extra"].copy() if full else None
         wrists = [skeleton.JOINT["left_wrist"], skeleton.JOINT["right_wrist"]]
         data = {}
@@ -1831,7 +1837,7 @@ class Tracker:
                     shutter.append({"before": before, "after": after, "points": factor(point_offsets),
                                     "silhouette": factor(match.silhouette_offsets),
                                     "front": factor(match.front_offsets)})
-                tensors = [omega_f, pos_f, b_f] + ([x_f] if full else [])
+                tensors = [omega_f, pos_f, b_f] + ([x_f] if full and self.layout.size else [])
                 if full:
                     hand_hidden = torch.as_tensor(1.0 + r.hidden_smoothness * self.hidden_factor(seen[:, wrists]),
                                                   dtype=dt, device=dev)                         # (count, 2)
@@ -1873,7 +1879,7 @@ class Tracker:
                         # see them
                         energy = energy + extra_priors(self.layout, xx, c) / count
                         if count > 2 and r.extra_smoothness > 0:
-                            face = xx[:, :9]
+                            face = xx[:, self.layout.face]
                             hands = self.layout.hand_offsets(xx)
                             face_rough = ((face[2:] - 2 * face[1:-1] + face[:-2]) ** 2).sum()
                             hand_rough = (((hands[2:] - 2 * hands[1:-1] + hands[:-2]) ** 2).sum(-1)
@@ -2146,7 +2152,7 @@ def pose_outputs(layout, result: dict) -> tuple[dict, dict]:
     rotations as PoseSequence reads them, rotation magnitudes, the hand PCA file, its sha1 and its
     compatibility with the body model) and their summary (rotation magnitudes of the jaw and eyes [deg]);
     empty for body21."""
-    if layout is None or layout.size == 0:
+    if layout is None or not layout.full:
         return {}, {"pose_model": "body21"}
     parts = layout.split(result["extra"])
     arrays = {"extra": result["extra"], "jaw": parts["jaw"], "eyes": parts["eyes"],
@@ -2154,9 +2160,11 @@ def pose_outputs(layout, result: dict) -> tuple[dict, dict]:
               "right_hand": parts["right_hand"], "jaw_deg": parts["jaw_deg"], "eye_deg": parts["eye_deg"],
               "hand_pca_file": str(layout.hands.path), "hand_pca_sha1": layout.hands.sha1,
               "hand_components": np.int64(layout.hand_count), "flat_hand_mean": np.bool_(layout.hands.flat_mean),
+              "face_fixed": np.bool_(layout.face_fixed),
               "hand_pca_compatibility": json.dumps(layout.hands.compatibility)}
     summary = {"pose_model": "full55", "hand_components": layout.hand_count, "hand_pca_file": str(layout.hands.path),
                "hand_pca_sha1": layout.hands.sha1, "flat_hand_mean": layout.hands.flat_mean,
+               "face_fixed": layout.face_fixed,
                "hand_pca_compatibility": layout.hands.compatibility,
                "jaw_deg": _spread(parts["jaw_deg"]),
                "left_eye_deg": _spread(parts["eye_deg"][:, 0]), "right_eye_deg": _spread(parts["eye_deg"][:, 1])}
@@ -2285,7 +2293,9 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
     info(f"tracking frames {first} to {last - 1} of {len(segmented)} on {device} ({str(dtype).split('.')[-1]}, "
          f"{torch.get_num_threads()} threads), pose model {config.tracking.pose_model}")
     layout = tracker.layout
-    if layout.size:
+    if layout.full:
+        if layout.face_fixed:
+            info("  jaw and eyes fixed at rest (not fitted)")
         info(f"  hands: {layout.hand_count} PCA coefficients each about the "
              f"{'flat' if layout.hands.flat_mean else 'mean (relaxed)'} hand, from {layout.hands.path} (sha1 "
              f"{layout.hands.sha1[:10]}); body model {model.path} (sha1 {model.sha1[:10]})")

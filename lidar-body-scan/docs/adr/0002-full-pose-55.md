@@ -27,6 +27,11 @@ pose a single LiDAR can recover, and whether fitting it changes the rest of the 
    (`hand_pca_compatibility`).
    `--flat-hand-mean` replaces the mean hand by the flat hand (zeros) and keeps the components, so that
    the rest pose of the fingers is that of body21 (the avatar's file has no hands_mean).
+   `--face-fixed` keeps the jaw and the eyes at rest and out of the optimised vector. Adding unknowns
+   changes the path of L-BFGS even where they stay at zero (measured on s02_natural01 frames 0 to 9:
+   full55 K = 0 with the flat mean against body21, residual medians up to 0.17 mm apart per frame, body
+   pose up to 0.8 deg), so comparisons with body21 carry that optimiser noise; full55 K = 0, flat mean,
+   face fixed is the exact control.
 3. Priors: the jaw and the eyes towards rest with a strong weight (face_weight 10 per rad^2: the LiDAR
    cannot see them); the hands towards the mean hand, on their joint rotations (hand_prior_weight); the
    stage-1 continuity and the stage-2 smoothness apply to them, with the hidden-part weighting of the

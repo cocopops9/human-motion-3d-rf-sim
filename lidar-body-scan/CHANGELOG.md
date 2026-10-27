@@ -13,6 +13,8 @@ Added (ADR 0002; not validated on recorded takes yet):
 - `track --flat-hand-mean` (full55): the mean hand is the flat hand (zeros) and the PCA components those
   of `--hand-pca`; recorded as `flat_hand_mean` in motion.json. With `--hand-components 0` it is the
   body21 pose plus the jaw and the eyes (control of the mean-hand confound).
+- `track --face-fixed` (full55): the jaw and the eyes stay at rest and out of the optimised vector; with
+  `--hand-components 0 --flat-hand-mean` the objective and the result are those of body21 (control).
 - `track --init-motion`: warm start from an earlier motion (every frame from its pose there, no
   searches).
 - `track --holdout-fraction`: a fraction of the points of every frame held out of the fit, and their residual
