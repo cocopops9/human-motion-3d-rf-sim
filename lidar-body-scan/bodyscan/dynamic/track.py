@@ -218,6 +218,9 @@ class TrackConfig:
                                     "points, enough for its opening, spread and thumb, not for single fingers; 0: "
                                     "the hands stay at the mean (relaxed) hand of hand_pca, only the jaw and the eyes "
                                     "are added")
+    flat_hand_mean: bool = param(False, "full55: the mean hand is the flat hand (hands_mean set to zeros, the PCA "
+                                        "components kept), as in the hands of body21 with a model file without "
+                                        "hands_mean; off: the mean (relaxed, curled) hand of hand_pca")
     hand_prior_weight: float = param(0.002, "weight pulling each hand towards the mean (relaxed) hand [per rad^2 of "
                                             "its 15 joint rotations, summed] (full55)",
                                      effect="larger: hands stay relaxed; smaller: a few stray points bend the fingers")
@@ -630,7 +633,8 @@ class Tracker:
         hands = None
         if c.pose_model == "full55":
             from bodyscan.body.hands import HandPCA
-            hands = HandPCA.load(c.hand_pca or model.path, c.hand_components, body_model=model.path)
+            hands = HandPCA.load(c.hand_pca or model.path, c.hand_components, body_model=model.path,
+                                 flat_mean=c.flat_hand_mean)
         self.layout = PoseLayout(model, c.pose_model, hands)
 
     def frame_data(self, person) -> FrameData:
@@ -1957,6 +1961,7 @@ class Tracker:
         heldout_median = np.full(frames, np.nan)
         heldout_p90 = np.full(frames, np.nan)
         heldout_hand_median = np.full(frames, np.nan)
+        heldout_hand_points = np.zeros(frames, dtype=np.int64)
         pooled = {"fit": [], "fit_hands": [], "heldout": [], "heldout_hands": []}
         radius = self.config.tracking.hand_radius
         knuckles = [skeleton.JOINT["left_middle1"], skeleton.JOINT["right_middle1"]]
@@ -2010,6 +2015,7 @@ class Tracker:
                     heldout_p90[k] = np.percentile(held, 90)
                     pooled["heldout"].append(held)
                     pooled["heldout_hands"].append(held[held_near])
+                    heldout_hand_points[k] = int(held_near.sum())
                     if held_near.any():
                         heldout_hand_median[k] = np.median(held[held_near])
                 reach = self.config.tracking.max_correspondence
@@ -2041,7 +2047,8 @@ class Tracker:
                 "limit_excess_deg": excess, "observed": observed, "arm_in_trunk": arm_in_trunk,
                 "hand_points": hand_points, "hand_residual_median": hand_median,
                 "heldout_residual_median": heldout_median, "heldout_residual_p90": heldout_p90,
-                "heldout_hand_residual_median": heldout_hand_median, "pooled": summary}
+                "heldout_hand_residual_median": heldout_hand_median, "heldout_hand_points": heldout_hand_points,
+                "pooled": summary}
 
     def hand_centers(self, root_matrix: np.ndarray, root_position: np.ndarray, body: np.ndarray,
                      batch: int = 64) -> np.ndarray:
@@ -2146,10 +2153,11 @@ def pose_outputs(layout, result: dict) -> tuple[dict, dict]:
               "hand_coefficients": parts["hand_coefficients"], "left_hand": parts["left_hand"],
               "right_hand": parts["right_hand"], "jaw_deg": parts["jaw_deg"], "eye_deg": parts["eye_deg"],
               "hand_pca_file": str(layout.hands.path), "hand_pca_sha1": layout.hands.sha1,
-              "hand_components": np.int64(layout.hand_count),
+              "hand_components": np.int64(layout.hand_count), "flat_hand_mean": np.bool_(layout.hands.flat_mean),
               "hand_pca_compatibility": json.dumps(layout.hands.compatibility)}
     summary = {"pose_model": "full55", "hand_components": layout.hand_count, "hand_pca_file": str(layout.hands.path),
-               "hand_pca_sha1": layout.hands.sha1, "hand_pca_compatibility": layout.hands.compatibility,
+               "hand_pca_sha1": layout.hands.sha1, "flat_hand_mean": layout.hands.flat_mean,
+               "hand_pca_compatibility": layout.hands.compatibility,
                "jaw_deg": _spread(parts["jaw_deg"]),
                "left_eye_deg": _spread(parts["eye_deg"][:, 0]), "right_eye_deg": _spread(parts["eye_deg"][:, 1])}
     return arrays, summary
@@ -2185,7 +2193,8 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
         **(extra or {}),
     }
     added = {name: quality[name] for name in ("hand_points", "hand_residual_median", "heldout_residual_median",
-                                              "heldout_residual_p90", "heldout_hand_residual_median")
+                                              "heldout_residual_p90", "heldout_hand_residual_median",
+                                              "heldout_hand_points")
              if name in quality}
     frames = len(result["times"])
     np.savez_compressed(path, times=result["times"], root_rotation=result["root_rotation"],
@@ -2277,7 +2286,8 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
          f"{torch.get_num_threads()} threads), pose model {config.tracking.pose_model}")
     layout = tracker.layout
     if layout.size:
-        info(f"  hands: {layout.hand_count} PCA coefficients each from {layout.hands.path} (sha1 "
+        info(f"  hands: {layout.hand_count} PCA coefficients each about the "
+             f"{'flat' if layout.hands.flat_mean else 'mean (relaxed)'} hand, from {layout.hands.path} (sha1 "
              f"{layout.hands.sha1[:10]}); body model {model.path} (sha1 {model.sha1[:10]})")
         check = layout.hands.compatibility
         if check and check["differing_template_vertices"]:

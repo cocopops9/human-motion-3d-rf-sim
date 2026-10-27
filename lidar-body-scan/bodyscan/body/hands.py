@@ -138,22 +138,25 @@ class HandPCA:
     components     (2, K, 45) rows of hands_components (left, right), radians per unit coefficient
     mean           (2, 45) relaxed hand pose (axis-angle of the 15 joints, flattened)
     path, sha1     the file they were read from
-    compatibility  compatibility_of_files with the body model (empty when none was given)"""
+    compatibility  compatibility_of_files with the body model (empty when none was given)
+    flat_mean      the mean was set to zeros (the flat hand) instead of the file's hands_mean"""
     components: np.ndarray
     mean: np.ndarray
     path: str
     sha1: str
     compatibility: dict = field(default_factory=dict)
+    flat_mean: bool = False
 
     @property
     def count(self) -> int:
         return int(self.components.shape[1])
 
     @classmethod
-    def load(cls, path, count: int, body_model=None) -> "HandPCA":
+    def load(cls, path, count: int, body_model=None, flat_mean: bool = False) -> "HandPCA":
         """Read the hand components and means from an SMPL-X .npz. With 'body_model' (the model file
         the avatar was fitted with), the two files must be compatible (check_compatibility): otherwise
-        the hands would belong to another body and the program stops."""
+        the hands would belong to another body and the program stops. flat_mean: the mean is the flat
+        hand (zeros; SMPL-X flat_hand_mean true), the components are those of the file."""
         path = Path(path)
         if not path.exists():
             raise SystemExit(f"hand PCA file not found: {path}")
@@ -175,8 +178,10 @@ class HandPCA:
             raise SystemExit(f"{path}: hand components of shape {components.shape[1:]}, expected (n, 45)")
         if not 0 <= count <= components.shape[1]:
             raise SystemExit(f"{count} hand components asked, {path} has {components.shape[1]}")
+        if flat_mean:
+            mean = np.zeros_like(mean)
         return cls(components[:, :count].astype(np.float64), mean.astype(np.float64), str(path), file_sha1(path),
-                   compatibility)
+                   compatibility, flat_mean)
 
     def axis_angle_np(self, coefficients: np.ndarray) -> np.ndarray:
         """(..., 2, K) coefficients -> (..., 2, 15, 3) hand joint rotations (axis-angle)."""

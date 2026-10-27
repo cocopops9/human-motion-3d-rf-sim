@@ -10,6 +10,9 @@ Added (ADR 0002; not validated on recorded takes yet):
   differences at least 0.30 m from the hands; the check's numbers and both sha1 go into motion.json); strong prior of the jaw and eyes towards rest
   (`face_weight`), prior of the hands towards the mean hand (`hand_prior_weight`), their smoothness in
   stage 2 (`refine.extra_smoothness`). Default `body21`: the 1.7.1 tracker unchanged (checked: identical motion on a synthetic take).
+- `track --flat-hand-mean` (full55): the mean hand is the flat hand (zeros) and the PCA components those
+  of `--hand-pca`; recorded as `flat_hand_mean` in motion.json. With `--hand-components 0` it is the
+  body21 pose plus the jaw and the eyes (control of the mean-hand confound).
 - `track --init-motion`: warm start from an earlier motion (every frame from its pose there, no
   searches).
 - `track --holdout-fraction`: a fraction of the points of every frame held out of the fit, and their residual

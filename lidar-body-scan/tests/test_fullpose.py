@@ -63,6 +63,17 @@ class HandPCATest(unittest.TestCase):
         np.testing.assert_allclose(pose[1].reshape(45), hands.mean[1] + 2.0 * hands.components[1, 2])
         np.testing.assert_allclose(pose[0].reshape(45), hands.mean[0])
 
+    def test_flat_mean_keeps_the_components_and_zeros_the_mean(self):
+        from bodyscan.body.hands import HandPCA
+        relaxed = HandPCA.load(self.pca, 6, body_model=self.body)
+        flat = HandPCA.load(self.pca, 6, body_model=self.body, flat_mean=True)
+        self.assertTrue(flat.flat_mean)
+        self.assertFalse(relaxed.flat_mean)
+        self.assertGreater(float(np.abs(relaxed.mean).max()), 0.0)
+        np.testing.assert_array_equal(flat.mean, np.zeros((2, 45)))
+        np.testing.assert_array_equal(flat.components, relaxed.components)
+        np.testing.assert_array_equal(flat.axis_angle_np(np.zeros((1, 2, 6))), np.zeros((1, 2, 15, 3)))
+
     def test_another_body_or_missing_components_stop(self):
         from bodyscan.body.hands import HandPCA
         other = write_hand_pca_file(self.body, self.folder.path / "other.npz", change_body=True)
