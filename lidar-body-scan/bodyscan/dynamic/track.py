@@ -270,6 +270,9 @@ class TrackConfig:
                                 "started flat leaves the fingers flat (October pilot)",
                          effect="more starts cost time in the frames where a hand is seen closely")
     hand_search_points: int = param(25, "points near a hand needed for its search (hand_starts)")
+    hand_search_every: int = param(10, "the hand search (hand_starts) runs in every this-many-th tracked frame; the "
+                                       "frames between start from the hands of the frame before (continuity)",
+                                   effect="smaller: more searches, more time")
     hand_start_spread: float = param(3.0, "the most closed start of the hand search: first PCA coefficient of minus "
                                           "this (a fist is about -2.9 with the SMPL-X v1.1 components)")
 
@@ -1189,8 +1192,8 @@ class Tracker:
     def search_hands(self, frame: FrameData, fitted, prediction=None):
         """full55, stage 1: each hand with at least hand_search_points points within hand_radius of its middle
         knuckle is fitted again with the body and the other hand fixed, from its fitted coefficients and from
-        hand_starts starts of its first PCA coefficient (0 to -hand_start_spread: open to closed), two
-        correspondence rounds each; the start of lowest energy (the frame's terms and the extra priors with
+        hand_starts starts of its first PCA coefficient (0 to -hand_start_spread: open to closed), one
+        correspondence round each; the start of lowest energy (the frame's terms and the extra priors with
         the stage-1 continuity) is kept. Returns the fit with the chosen hand coefficients."""
         import torch
         from bodyscan.body.model import vertex_normals
@@ -1244,9 +1247,9 @@ class Tracker:
                     return (self.frame_energy(vertices[0], frame, current)
                             + extra_priors(layout, assemble(), c, pred_extra))
 
-                for _ in range(2):
+                for _ in range(1):
                     current = rematch()
-                    optimizer = torch.optim.LBFGS([h], lr=1.0, max_iter=15, history_size=10,
+                    optimizer = torch.optim.LBFGS([h], lr=1.0, max_iter=12, history_size=10,
                                                   line_search_fn="strong_wolfe")
 
                     def closure():
@@ -1587,7 +1590,8 @@ class Tracker:
                             turned += 1
                             connected += len(refits)
                             poor_run = 0
-            if c.hand_starts > 0 and self.layout.full and not warmed:
+            if (c.hand_starts > 0 and self.layout.full and not warmed
+                    and (k - start) % max(c.hand_search_every, 1) == 0):
                 searched_hands = self.search_hands(frame, result, None if restarted else prediction)
                 if searched_hands is not result:
                     result = searched_hands

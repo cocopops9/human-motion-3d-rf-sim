@@ -13,9 +13,13 @@ offset) is cut frame by frame:
     3. person      the foreground within a vertical cylinder of radius 'gate' around where the Ouster
                    saw the person, between min_height and max_height above the floor
     4. silhouette  a crop of the image around the person, as for the Ouster: 1 = a return of the
-                   person, 2 = no return next to the person where the empty scene returns (dark
+                   person, 2 = no return where the empty scene returns from behind the person (dark
                    fabric, grazing angles, the projector shadow of a depth camera), 0 = anything else;
-                   with the measured and empty-scene ranges and the time of every pixel
+                   with the measured and empty-scene ranges and the time of every pixel. The crop
+                   covers the whole gate cylinder as the sensor sees it (with dark_reach < 0 every
+                   pixel without a return in it is dark): a suit that returns little light to one
+                   sensor (the Helios saw about 20 points of the person per turn on 3 Nov) must not
+                   look like empty space where the body is
 
 Output (read by bodyscan.dynamic.views.ExtraSensors): <out>/<name>/scene.npz, <out>/<name>/frames/
 person_XXXXX.npz (XXXXX: the Ouster frame index), <out>/<name>/segments.json, and the sensor's entry
@@ -46,7 +50,8 @@ class ExtraSegmentationConfig:
     max_time_difference: float = 0.035  # s, between the sensor's person and the Ouster's
     crop_rows: int = 6
     crop_columns: int = 12
-    dark_reach: int = 3                 # pixels
+    dark_reach: int = 3                 # pixels from the person's returns; negative: the whole crop
+    crop_gate: bool = False             # the crop covers the gate cylinder (else the person's pixels only)
     voxel: float = 0.0                  # m: keep one point per voxel of this size (0: every pixel); a dense
                                         # depth camera otherwise outnumbers the LiDARs with correlated errors
 
@@ -199,11 +204,30 @@ class ExtraSegmenter:
             reference = float(np.median(cols))
             unwrapped = (reference + np.mod(cols - reference + g.width / 2, g.width) - g.width / 2).round().astype(int)
         else:
+            reference = 0.0
             unwrapped = cols.astype(int)
-        r0 = max(int(rows.min()) - c.crop_rows, 0)
-        r1 = min(int(rows.max()) + c.crop_rows + 1, g.height)
-        c0 = int(unwrapped.min()) - c.crop_columns
-        c1 = int(unwrapped.max()) + c.crop_columns + 1
+        row_low, row_high = int(rows.min()), int(rows.max())
+        col_low, col_high = int(unwrapped.min()), int(unwrapped.max())
+        if c.crop_gate:
+            # the gate cylinder as the sensor sees it: where the body may be
+            angle = np.linspace(0.0, 2 * np.pi, 24, endpoint=False)
+            ring = np.stack([center_xy[0] + c.gate * np.cos(angle), center_xy[1] + c.gate * np.sin(angle)], axis=1)
+            heights = np.linspace(max(c.min_height, 0.0), c.max_height, 7)
+            cylinder = np.array([[x, y, z] for x, y in ring for z in heights])
+            g_rows, g_cols, _ = g.project(cylinder)
+            seen = g_rows > -100
+            if seen.any():
+                g_cols = g_cols[seen]
+                if self.wraps:
+                    g_cols = reference + np.mod(g_cols - reference + g.width / 2, g.width) - g.width / 2
+                row_low = min(row_low, int(np.floor(g_rows[seen].min())))
+                row_high = max(row_high, int(np.ceil(g_rows[seen].max())))
+                col_low = min(col_low, int(np.floor(g_cols.min())))
+                col_high = max(col_high, int(np.ceil(g_cols.max())))
+        r0 = max(row_low - c.crop_rows, 0)
+        r1 = min(row_high + c.crop_rows + 1, g.height)
+        c0 = col_low - c.crop_columns
+        c1 = col_high + c.crop_columns + 1
         if not self.wraps:
             c0, c1 = max(c0, 0), min(c1, g.width)
         crop_rows = np.arange(r0, r1)
@@ -218,7 +242,9 @@ class ExtraSegmenter:
         person_range = float(np.median(ranges))
         with np.errstate(invalid="ignore"):
             behind = crop_background > person_range - 0.3
-        dark = np.isnan(crop_range) & behind & dilate(crop_mask == 1, c.dark_reach)
+        dark = np.isnan(crop_range) & behind
+        if c.dark_reach >= 0:
+            dark &= dilate(crop_mask == 1, c.dark_reach)
         crop_mask[dark] = 2
         pixels_found = len(points)
         if c.voxel > 0:
