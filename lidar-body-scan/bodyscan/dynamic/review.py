@@ -8,6 +8,12 @@ not drawn. In the side view, a limb that the tracker completed from its
 partner on the other side (the sensor did not see it) is pale violet. A strip at the top gives the time, the frame number and the
 flags of the tracker (free space, sliding, ...).
 
+With additional sensors (extra_sensors, see bodyscan.dynamic.views) their
+points are drawn too, moved to the frame's time with the root velocity, and
+every point is coloured by its sensor (Ouster blue, Helios orange, Xtion green,
+others grey); a third view shows the body from the far side, and the strip
+gives the median distance of each sensor's points to the body.
+
 With focus "hands" the two views are close-ups of the left and the right hand
 (0.4 m across, centred on the middle knuckle), both seen from the LiDAR, and
 the strip gives the median distance of the points near each hand.
@@ -42,10 +48,15 @@ def _camera(direction_xy):
     return view, right, up
 
 
+SENSOR_COLOURS = {"ouster": (74, 163, 255), "helios": (255, 159, 28), "xtion": (46, 214, 126)}
+OTHER_SENSOR = (200, 200, 200)
+
+
 def render(vertices, faces, points, residuals, center, direction_xy, half_width=0.9, half_height=1.05,
-           pixels=360, tinted=None) -> np.ndarray:
+           pixels=360, tinted=None, point_colours=None) -> np.ndarray:
     """(H, W, 3) uint8 orthographic view along direction_xy, centred on 'center'. tinted: optional
-    boolean per vertex: the triangles of these vertices are drawn pale violet (guessed limbs)."""
+    boolean per vertex: the triangles of these vertices are drawn pale violet (guessed limbs);
+    point_colours: (N, 3) colours of the points instead of the residual scale."""
     view, right, up = _camera(direction_xy)
     h = pixels
     w = int(round(pixels * half_width / half_height))
@@ -84,9 +95,12 @@ def render(vertices, faces, points, residuals, center, direction_xy, half_width=
         inside = (px >= 0) & (px < w) & (py >= 0) & (py < h)
         px, py, pd, res = px[inside], py[inside], pd[inside], residuals[inside]
         visible = ~(depth[py, px] < pd - 0.03)                         # not behind the body in this view
-        level = np.clip(res / 0.05, 0.0, 1.0)
-        colors = np.stack([255 * np.clip(2 * level, 0, 1), 255 * np.clip(2 - 2 * level, 0, 1),
-                           40 * np.ones_like(level)], axis=1)
+        if point_colours is not None:
+            colors = np.asarray(point_colours, dtype=np.float32)[inside]
+        else:
+            level = np.clip(res / 0.05, 0.0, 1.0)
+            colors = np.stack([255 * np.clip(2 * level, 0, 1), 255 * np.clip(2 - 2 * level, 0, 1),
+                               40 * np.ones_like(level)], axis=1)
         for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
             x, y = np.clip(px + dx, 0, w - 1), np.clip(py + dy, 0, h - 1)
             image[y[visible], x[visible]] = colors[visible]
@@ -114,7 +128,7 @@ HAND_HALF_SIZE = 0.2          # half the width and height of a hand close-up [m]
 
 
 def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames=None, pixels: int = 320,
-           model_path=None, focus: str = "body") -> list[Path]:
+           model_path=None, focus: str = "body", extra_sensors=None) -> list[Path]:
     import torch
     from bodyscan.body import skeleton
     if focus not in ("body", "hands"):
@@ -139,6 +153,11 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
     for k, path in enumerate(segmented.paths):
         by_index[int(path.stem.split("_")[-1])] = k
     sensor = segmented.sensor_position
+    extra = None
+    if extra_sensors:
+        from bodyscan.dynamic.views import ExtraSensors
+        extra = ExtraSensors(extra_sensors)
+        root_velocity = np.gradient(motion.root_position, motion.times, axis=0) if len(motion) > 1 else None
     # limbs completed from their partner (track, version 1.5): their vertices, and per frame how much
     guessed = data["guessed"] if "guessed" in data.files else None
     limb_vertices = []
@@ -157,7 +176,26 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
         vertices = vertices[0].astype(np.float64)
         person = segmented.load(by_index[int(frame_index[k])]) if int(frame_index[k]) in by_index else None
         points = person.points if person is not None else np.zeros((0, 3))
+        colours, sensor_notes = None, []
+        if extra is not None:
+            # every sensor's points, moved to the Ouster's time with the root velocity, coloured by sensor
+            reference = (float(np.median(person.point_times)) if person is not None and len(person.point_times)
+                         else float(motion.times[k]))
+            groups = [("ouster", points)]
+            for number, other in extra.frames_for(int(frame_index[k])):
+                moved = other.points
+                if root_velocity is not None and len(other.point_times):
+                    moved = moved - root_velocity[k] * (float(np.median(other.point_times)) - reference)
+                groups.append((extra.views[number].name, moved))
+            points = np.concatenate([g[1] for g in groups]).reshape(-1, 3)
+            colours = np.concatenate([np.tile(SENSOR_COLOURS.get(name, OTHER_SENSOR), (len(g), 1))
+                                      for name, g in groups]).reshape(-1, 3)
+            labels = np.concatenate([np.full(len(g), n) for n, (_, g) in enumerate(groups)])
         residual = (closest_points(vertices, shaped.faces_np, points)[2] if len(points) else np.zeros(0))
+        if extra is not None:
+            for n, (name, group) in enumerate(groups):
+                mine = residual[labels == n]
+                sensor_notes.append(f"{name} {len(mine)}" + (f" ({1000 * np.median(mine):.0f} mm)" if len(mine) else ""))
         center = np.array([part.root_position[0, 0], part.root_position[0, 1], 1.0])
         toward = center[:2] - sensor[:2]
         tinted = None
@@ -181,6 +219,19 @@ def review(motion_path, segment_folder, avatar_path, out, every: int = 2, frames
             lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
                      f"left and right hand from the LiDAR ({200 * HAND_HALF_SIZE:.0f} cm across)",
                      "   ".join(notes) + "   flags: " + (", ".join(active) if active else "none")]
+        elif extra is not None:
+            views = [render(vertices, shaped.faces_np, points, residual, center, toward, pixels=pixels,
+                            point_colours=colours),
+                     render(vertices, shaped.faces_np, points, residual, center, np.array([-toward[1], toward[0]]),
+                            pixels=pixels, tinted=tinted, point_colours=colours),
+                     render(vertices, shaped.faces_np, points, residual, center, -toward, pixels=pixels,
+                            tinted=tinted, point_colours=colours)]
+            image = np.concatenate(views, axis=1)
+            lines = [f"frame {int(frame_index[k])}  t = {motion.times[k] - motion.times[0]:.2f} s   "
+                     f"from the Ouster, from the side, from behind   points: Ouster blue, Helios orange, Xtion green",
+                     "points (median distance to the body): " + ", ".join(sensor_notes)
+                     + "   flags: " + (", ".join(active) if active else "none")
+                     + ("   violet: guessed" if tinted is not None and tinted.any() else "")]
         else:
             views = [render(vertices, shaped.faces_np, points, residual, center, toward, pixels=pixels),
                      render(vertices, shaped.faces_np, points, residual, center, np.array([-toward[1], toward[0]]),

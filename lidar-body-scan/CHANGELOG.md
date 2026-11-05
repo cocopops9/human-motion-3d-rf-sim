@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased (branch feature/multisensor, on feature/full-pose-55): the tracker with several sensors
+
+Added (stage S4 of docs/multisensor-plan.md, first version; validated on one synthetic take, not yet on
+recorded takes):
+
+- `track --extra-sensors <folder>`: additional sensors of the take (a second LiDAR, a depth camera; the
+  folder holds views.json and, per sensor, scene.npz and frames/person_XXXXX.npz matched to the Ouster
+  frames, `bodyscan.dynamic.views`). Their points join the data term, each divided by its sensor's noise
+  relative to the Ouster's (`sigma` in views.json); each sensor has its own visible faces, free-space and
+  in-front terms (`PinholeGeometry` for depth cameras, `RangeImageGeometry` for spinning LiDARs; for sparse
+  beams the free space is tested only near a beam, `row_tolerance`, and the occlusion grid is refined in
+  rows, `row_supersample`). A body part counts as observed when any sensor sees it. Stage 1 moves the body
+  with the root velocity of the last two frames to each sensor's time; stage 2 compares every point and
+  pixel with the body at its own time, as for the Ouster's rolling shutter.
+- `track --exclude-sensors a,b`: additional sensors loaded but left out of the fit; their points are
+  reported as held out (held-out-sensor validation, plan section 8.3).
+- `track --extra-sensor-weight`: weight of the additional sensors' free-space terms.
+- Per sensor in motion.json and motion.npz: frames seen, points per frame, residual (fitted and held out).
+- `bodyscan.dynamic.extra_segment` (numpy only): the person in an additional sensor's images, frame by
+  frame of the Ouster segmentation (closest image in time, background subtraction, gate around the
+  Ouster's person, silhouette crop with dark pixels), optional voxel thinning of dense depth cameras.
+- `track --hand-starts N` (full55): a hand seen closely (`hand_search_points` within `hand_radius`) is
+  fitted again from its fitted coefficients and from N starts of its first PCA coefficient (open to
+  closed, `hand_start_spread`), body fixed; the lowest energy is kept.
+- `review-motion --extra-sensors`: every sensor's points, coloured by sensor, and a third view from behind.
+
+Checked: with the Ouster alone (no `--extra-sensors`) the motion of a synthetic take is bit for bit that
+of feature/full-pose-55 (all 38 arrays of motion.npz; only the stored configuration differs by the new
+fields).
+
 ## Unreleased (branch feature/full-pose-55): all 55 joints in the tracker
 
 Added (ADR 0002; not validated on recorded takes yet):

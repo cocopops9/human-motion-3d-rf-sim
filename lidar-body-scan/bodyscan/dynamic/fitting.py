@@ -105,18 +105,20 @@ def sample_surface(vertices: np.ndarray, faces: np.ndarray, count: int, rng=None
 # ----------------------------------------------------------------------------
 
 def visible_vertices(vertices: np.ndarray, normals: np.ndarray, geometry, sensor_position: np.ndarray,
-                     tolerance: float = 0.03, supersample: int = 2) -> np.ndarray:
+                     tolerance: float = 0.03, supersample: int = 2, row_supersample: int | None = None) -> np.ndarray:
     """Vertices the sensor can see: facing it, and not behind another part of
     the body. Occlusion: z-buffer of the vertex ranges on the range-image grid
     refined 'supersample' times (a vertex is hidden when another vertex of the
-    same cell is more than 'tolerance' closer)."""
+    same cell is more than 'tolerance' closer); row_supersample refines the rows
+    differently (sparse beams, such as the 2 degree rings of a Helios 16)."""
+    rows_fine = supersample if row_supersample is None else int(row_supersample)
     towards = sensor_position - vertices
     facing = np.einsum("ij,ij->i", normals, towards) > 0.0
     row, column, distance = geometry.project(vertices)
     width = geometry.width * supersample
-    r = np.round(row * supersample).astype(np.int64)
+    r = np.round(row * rows_fine).astype(np.int64)
     c = np.mod(np.round(column * supersample).astype(np.int64), width)
-    inside = (r >= 0) & (r < geometry.height * supersample)
+    inside = (r >= 0) & (r < geometry.height * rows_fine)
     key = r * width + c
     order = np.lexsort((distance, key))
     first = np.ones(len(order), dtype=bool)

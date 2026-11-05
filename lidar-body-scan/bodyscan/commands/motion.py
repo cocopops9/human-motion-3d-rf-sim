@@ -346,7 +346,13 @@ class Track(ConfiguredCommand):
     points held out to measure the fit:
 
         python -m bodyscan track walk01_seg --avatar s02_avatar.npz --out walk01_full55 --pose-model full55
-            --hand-pca SMPLX_MALE_v11.npz --init-motion walk01_motion.npz --holdout-fraction 0.2"""
+            --hand-pca SMPLX_MALE_v11.npz --init-motion walk01_motion.npz --holdout-fraction 0.2
+
+    With the additional sensors of a three-sensor rig (a folder with views.json, written by the
+    session tools), whose points and free space join the Ouster's:
+
+        python -m bodyscan track s02_walk01_seg --avatar s02_avatar.npz --out walk01_3s
+            --extra-sensors s02_walk01_extra"""
     name = "track"
     help = "fit the avatar to every frame of a moving person"
 
@@ -433,13 +439,16 @@ class ReviewMotion(Command):
         parser.add_argument("--model", default=None)
         parser.add_argument("--focus", choices=("body", "hands"), default="body",
                             help="body: the whole body from the LiDAR and from the side; hands: close-ups of both hands")
+        parser.add_argument("--extra-sensors", default=None,
+                            help="folder of additional sensors (views.json) used by the tracking: their points "
+                                 "are drawn too, coloured by sensor, with a third view from behind")
         parser.add_argument("--quiet", action="store_true")
 
     def run(self, args):
         set_quiet(args.quiet)
         from bodyscan.dynamic.review import review
         review(args.motion, args.segments, args.avatar, args.out, args.every, args.frames, model_path=args.model,
-               focus=args.focus)
+               focus=args.focus, extra_sensors=args.extra_sensors)
         return 0
 
 

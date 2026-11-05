@@ -45,6 +45,17 @@ silhouette, limit and floor terms for every frame, plus
                   milliseconds of it, or a whole turn when standing where the
                   frame starts)
 
+Several sensors (extra_sensors): the Ouster segmentation sets the frames, their
+times and the floor frame; every additional sensor (a second LiDAR, a depth
+camera; bodyscan.dynamic.views) adds, per frame, its points of the person and
+the crop of its own image. Its points join the data term, each divided by the
+sensor's noise relative to the Ouster's; each sensor has its own visible
+faces, free-space and in-front terms. A body part counts as observed when any
+sensor sees it, so the hidden-limb machinery works only where no sensor does.
+Points of different sensors are measured at different times: stage 1 moves the
+body with the root velocity of the previous frames to the time of each sensor,
+stage 2 compares every point and pixel with the body at its own time.
+
 Output motion.npz: the pose of every frame (times on the sensor clock,
 root rotation and position, body joint rotations: a PoseSequence), the
 joints, the foot contacts, per frame and per body part the fraction of the
@@ -244,6 +255,23 @@ class TrackConfig:
     hand_radius: float = param(0.12, "points within this distance of the middle knuckle of a hand count as near the "
                                      "hand in the quality numbers (the knuckle of the warm-start pose with "
                                      "init_motion, so that every run counts the same points)", unit="m")
+    extra_sensors: str = param("", "folder of additional sensors of the take (views.json, written by the session "
+                                   "tools of the three-sensor rig): their points join the data term (divided by "
+                                   "their noise relative to the Ouster's) and their images the free-space and "
+                                   "in-front terms; empty: the Ouster alone")
+    exclude_sensors: str = param("", "additional sensors (comma separated names) loaded but left out of the fit: "
+                                     "their points are reported as held out (held-out-sensor validation)")
+    extra_sensor_weight: float = param(1.0, "weight of the free-space and in-front terms of every additional sensor, "
+                                            "relative to the Ouster's (times the sensor's own weight in views.json)")
+    hand_starts: int = param(0, "full55, stage 1: a hand with at least hand_search_points points within hand_radius "
+                                "of its middle knuckle is fitted again (body fixed) from its fitted coefficients and "
+                                "from this many starts of its first PCA coefficient, from 0 (the mean hand) to minus "
+                                "hand_start_spread (closed); the start of lowest energy is kept (0: off). A fit "
+                                "started flat leaves the fingers flat (October pilot)",
+                         effect="more starts cost time in the frames where a hand is seen closely")
+    hand_search_points: int = param(25, "points near a hand needed for its search (hand_starts)")
+    hand_start_spread: float = param(3.0, "the most closed start of the hand search: first PCA coefficient of minus "
+                                          "this (a fist is about -2.9 with the SMPL-X v1.1 components)")
 
 
 @dataclass
@@ -441,29 +469,37 @@ def _arm_rotations(side: str, elevation, swing, twist, elbow) -> dict:
 # Observations of one frame
 # ----------------------------------------------------------------------------
 
-class FrameData:
-    """One segmented frame on the device: the person's points and the silhouette crop. With 'holdout'
-    > 0 that fraction of the points (at random, from 'seed' and the frame index) is kept out of the fit
-    (heldout_np); the crop ranges of their pixels are removed, so that the free-space and in-front
-    terms do not see them either (a pixel of the person without a range is neither)."""
+class ViewFrame:
+    """The person as one sensor saw it in one frame: its points (kept and held out) and the crop of its
+    image around the person (mask, measured and empty-scene ranges, pixel times, silhouette distance
+    map). With 'holdout' > 0 that fraction of the points (at random, from 'seed', the frame index and
+    the sensor's number) is kept out of the fit; the crop ranges of their pixels are removed, so that
+    the free-space and in-front terms do not see them either (a pixel of the person without a range is
+    neither). Sensor 0 (the Ouster) draws the same points as before several sensors existed."""
 
-    def __init__(self, person, geometry, device, dtype, holdout: float = 0.0, seed: int = 0):
-        import torch
+    def __init__(self, number: int, view, person, holdout: float = 0.0, seed: int = 0):
         from bodyscan.dynamic.fitting import distance_map
+        from bodyscan.dynamic.segment import _dilate
+        g = view.geometry
+        self.number = number
+        self.view = view
         self.index, self.time = person.index, person.time
         self.all_points_np = person.points
         keep = np.ones(len(person.points), dtype=bool)
         crop_range = person.crop_range
         if holdout > 0 and len(person.points):
-            keep = np.random.default_rng([int(seed), int(person.index)]).random(len(person.points)) >= holdout
+            draw = [int(seed), int(person.index)] if number == 0 else [int(seed), int(person.index), int(number)]
+            keep = np.random.default_rng(draw).random(len(person.points)) >= holdout
             rows = person.pixels[~keep, 0] - person.crop_origin[0]
-            columns = np.mod(person.pixels[~keep, 1] - person.crop_origin[1], geometry.width)
-            inside = (rows >= 0) & (rows < crop_range.shape[0]) & (columns < crop_range.shape[1])
+            columns = person.pixels[~keep, 1] - person.crop_origin[1]
+            if view.wraps:
+                columns = np.mod(columns, g.width)
+            inside = ((rows >= 0) & (rows < crop_range.shape[0]) & (columns >= 0)
+                      & (columns < crop_range.shape[1]))
             crop_range = crop_range.copy()
             crop_range[rows[inside], columns[inside]] = np.nan
         self.heldout_np = person.points[~keep]
         self.points_np = person.points[keep]
-        self.points = torch.as_tensor(self.points_np, dtype=dtype, device=device)
         self.point_times = person.point_times[keep]
         self.crop_origin = person.crop_origin
         self.mask = person.crop_mask
@@ -474,18 +510,103 @@ class FrameData:
         self.reference_column = person.crop_origin[1] + w / 2.0
         # one pixel around the person is uncertain: the edge filter of the segmentation removed mixed
         # pixels there, so the sensor did not clearly see through it
-        from bodyscan.dynamic.segment import _dilate
         self.uncertain = _dilate(self.mask > 0, 1)
-        # columns lost with a UDP packet: no return in the whole crop height although the empty
-        # scene returns there; the sensor saw nothing of them, so they are not free space
-        with np.errstate(invalid="ignore"):
-            self.lost_columns = (np.all(~np.isfinite(self.crop_range), axis=0)
-                                 & (np.mean(np.isfinite(self.crop_background), axis=0) > 0.5))
+        # columns lost with a UDP packet (spinning LiDARs): no return in the whole crop height although
+        # the empty scene returns there; the sensor saw nothing of them, so they are not free space
+        if view.wraps:
+            with np.errstate(invalid="ignore"):
+                self.lost_columns = (np.all(~np.isfinite(self.crop_range), axis=0)
+                                     & (np.mean(np.isfinite(self.crop_background), axis=0) > 0.5))
+        else:
+            self.lost_columns = np.zeros(w, dtype=bool)
         self.uncertain[:, self.lost_columns] = True
-        silhouette = distance_map(self.uncertain, geometry.vertical_step, geometry.column_step)
-        self.distance = torch.as_tensor(silhouette, dtype=dtype, device=device)
+        self.distance_np = distance_map(self.uncertain, g.vertical_step, g.column_step)
+        self.center = person.center
+        self.slice = slice(0, 0)              # its kept points in the frame's arrays (set by FrameData)
+        self.shift = None                     # (V, 3) or (3,) motion of the body from the frame's time to this
+        self.shift_t = None                   # sensor's [m] (numpy, torch)
+
+    @property
+    def count(self) -> int:
+        return len(self.points_np)
+
+    def reference_time(self) -> float:
+        """Median time of its points [s] (the frame time when it has none)."""
+        return float(np.median(self.point_times)) if len(self.point_times) else float(self.time)
+
+
+class FrameData:
+    """One frame on the device: the person as every sensor saw it. views: the ViewFrame of each fitted
+    sensor that saw the person (the Ouster first); points_np, points, point_times: their kept points one
+    after the other (point_view: the sensor's number of each, point_sigma: its noise relative to the
+    Ouster's); heldout_np: the held-out points of every sensor, and all points of the sensors left out
+    of the fit (heldout_view). The Ouster's crop keeps its names (crop_origin, mask, crop_range,
+    crop_background, crop_times, uncertain, lost_columns, distance, reference_column)."""
+
+    def __init__(self, person, geometry, device, dtype, holdout: float = 0.0, seed: int = 0, views=None,
+                 extra=()):
+        import torch
+        from bodyscan.dynamic.views import SensorView
+        if views is None:
+            views = [SensorView("ouster", geometry, None)]
+        self.device, self.dtype = device, dtype
+        self.index, self.time = person.index, person.time
+        frames = [ViewFrame(0, views[0], person, holdout, seed)]
+        frames += [ViewFrame(number, views[number], other, holdout, seed) for number, other in extra]
+        fitted = [f for f in frames if f.view.fitted]
+        left_out = [f for f in frames if not f.view.fitted]
+        self.views = fitted
+        start = 0
+        for f in fitted:
+            f.slice = slice(start, start + f.count)
+            start += f.count
+        if len(fitted) == 1:
+            self.points_np = fitted[0].points_np
+            self.point_times = fitted[0].point_times
+        else:
+            self.points_np = np.concatenate([f.points_np for f in fitted]).reshape(-1, 3)
+            self.point_times = np.concatenate([f.point_times for f in fitted])
+        self.point_view = np.concatenate([np.full(f.count, f.number, dtype=np.int64) for f in fitted])
+        self.multi = len(views) > 1
+        self.point_sigma = None
+        if self.multi:
+            sigma = np.concatenate([np.full(f.count, f.view.sigma) for f in fitted])
+            self.point_sigma = torch.as_tensor(sigma, dtype=dtype, device=device)
+        self.points = torch.as_tensor(self.points_np, dtype=dtype, device=device)
+        held = [f.heldout_np for f in fitted] + [f.all_points_np for f in left_out]
+        held_view = ([np.full(len(f.heldout_np), f.number, dtype=np.int64) for f in fitted]
+                     + [np.full(len(f.all_points_np), f.number, dtype=np.int64) for f in left_out])
+        self.heldout_np = held[0] if len(held) == 1 else np.concatenate(held).reshape(-1, 3)
+        self.heldout_view = np.concatenate(held_view)
+        self.all_points_np = (frames[0].all_points_np if len(frames) == 1
+                              else np.concatenate([f.all_points_np for f in frames]).reshape(-1, 3))
+        self.all_view = np.concatenate([np.full(len(f.all_points_np), f.number, dtype=np.int64) for f in frames])
+        self.left_out = left_out
+        o = frames[0]
+        self.crop_origin, self.mask, self.crop_range = o.crop_origin, o.mask, o.crop_range
+        self.crop_background, self.crop_times = o.crop_background, o.crop_times
+        self.reference_column, self.uncertain, self.lost_columns = o.reference_column, o.uncertain, o.lost_columns
+        for f in fitted:
+            f.distance = torch.as_tensor(f.distance_np, dtype=dtype, device=device)
+        self.distance = o.distance if o.view.fitted else torch.as_tensor(o.distance_np, dtype=dtype, device=device)
         self.center = person.center
         self._tree = None
+
+    def set_velocity(self, velocity) -> None:
+        """Move the body to each additional sensor's time: 'velocity' (V, 3) of every vertex (or (3,) of the
+        root) [m/s], from the frames around. Their points and pixels were measured a few tens of
+        milliseconds before or after the Ouster's (stage 1, and the quality numbers; stage 2 compares
+        every point with the body at its own time instead)."""
+        import torch
+        if velocity is None or (len(self.views) < 2 and not self.left_out):
+            return
+        velocity = np.asarray(velocity, dtype=np.float64)
+        if not np.all(np.isfinite(velocity)):
+            return
+        reference = self.views[0].reference_time()
+        for f in self.views[1:] + self.left_out:
+            f.shift = velocity * (f.reference_time() - reference)
+            f.shift_t = torch.as_tensor(f.shift, dtype=self.dtype, device=self.device)
 
     def tree(self):
         """k-d tree of the person's points (built on first use)."""
@@ -570,21 +691,43 @@ class TrunkCollision:
 
 
 @dataclass
-class FrameMatch:
-    """Correspondences of one frame for one optimisation round."""
-    point_index: object
-    face_ids: object
-    bary: object
+class ViewMatch:
+    """The free-space and in-front vertices of one sensor in one optimisation round."""
+    number: int                   # the sensor (position in Tracker.views)
+    frame: object                 # its ViewFrame
     silhouette: object            # vertex indices in free space
     silhouette_pixels: tuple      # their pixels (rows, columns) for the projection
     front: object                 # vertex indices in front of the measured surface
     front_pixels: tuple
     front_range: object           # measured ranges at those vertices
+    visible: np.ndarray           # boolean per vertex: seen by this sensor
+    visible_count: int
+    silhouette_offsets: np.ndarray = None     # time of their pixel minus the frame time [s] (float64)
+    front_offsets: np.ndarray = None
+    shift: object = None                      # (V, 3) or (3,) torch: stage-1 motion of the body to this sensor's time
+
+
+@dataclass
+class FrameMatch:
+    """Correspondences of one frame for one optimisation round. silhouette and front: the vertices in
+    free space and in front of the measured surface of any sensor (per sensor, with their pixels, in
+    'views'); visible: seen by any sensor; distance: every point's distance to the body its own sensor
+    sees."""
+    point_index: object
+    face_ids: object
+    bary: object
+    silhouette: object            # vertex indices in free space (all sensors)
+    silhouette_pixels: tuple      # the Ouster's: their pixels (rows, columns) for the projection
+    front: object                 # vertex indices in front of the measured surface (all sensors)
+    front_pixels: tuple
+    front_range: object           # measured ranges at the Ouster's front vertices
     visible: np.ndarray           # boolean per vertex
     visible_count: int
     silhouette_offsets: np.ndarray = None     # time of their pixel minus the frame time [s] (float64)
     front_offsets: np.ndarray = None
     distance: np.ndarray = None               # every point's distance to the visible body [m]
+    views: list = None                        # ViewMatch per sensor
+    point_shift: object = None                # (M, 3) torch: stage-1 motion of the body at each matched point
 
 
 # ----------------------------------------------------------------------------
@@ -643,11 +786,33 @@ class Tracker:
             hands = HandPCA.load(c.hand_pca or model.path, c.hand_components, body_model=model.path,
                                  flat_mean=c.flat_hand_mean)
         self.layout = PoseLayout(model, c.pose_model, hands, face_fixed=c.face_fixed)
+        # the sensors: the Ouster of the segmentation first, then the additional ones of extra_sensors
+        from bodyscan.dynamic.views import ExtraSensors, SensorView
+        self.views = [SensorView("ouster", self.geometry, self.background_range, sigma=1.0, weight=1.0,
+                                 foreground_margin=self.foreground_margin, row_tolerance=0.5)]
+        self.extra = None
+        if c.extra_sensors:
+            self.extra = ExtraSensors(c.extra_sensors, exclude=c.exclude_sensors.split(","),
+                                      weight=c.extra_sensor_weight)
+            self.views += self.extra.views
+        self.view_tables = [self.tables] + [v.geometry.torch_tables(self.device, self.dtype) for v in self.views[1:]]
+        # several sensors: the share of the visible body in free space is measured by surface area (a third of
+        # the area of every face at each corner, rest pose): the densely meshed hands would otherwise weigh
+        # as much as the trunk, and every sensor adds its own edge pixels
+        self.vertex_area = None
+        if self.extra is not None:
+            rest = self.shaped.vertices.detach().cpu().numpy().astype(np.float64)
+            corners = rest[self.faces_np]
+            area = 0.5 * np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+            self.vertex_area = np.bincount(self.faces_np.ravel(), np.repeat(area / 3.0, 3), minlength=len(rest))
 
     def frame_data(self, person) -> FrameData:
-        """A segmented frame on the device, with the points of holdout_fraction held out."""
+        """A segmented frame on the device (every sensor that saw the person), with the points of
+        holdout_fraction held out."""
         c = self.config.tracking
-        return FrameData(person, self.geometry, self.device, self.dtype, c.holdout_fraction, c.holdout_seed)
+        extra = [] if self.extra is None else [(1 + n, p) for n, p in self.extra.frames_for(person.index)]
+        return FrameData(person, self.geometry, self.device, self.dtype, c.holdout_fraction, c.holdout_seed,
+                         views=self.views, extra=extra)
 
     def load_frame(self, slot: int) -> FrameData:
         return self.frame_data(self.segmented.load(int(slot)))
@@ -680,6 +845,20 @@ class Tracker:
         main = axis_angle_to_matrix(torch.cat([head, body, tail], dim=1))
         return torch.cat([main, self.hands.expand(f, -1, -1, -1)], dim=1)
 
+    def vertices_of(self, rotation, position, body, extra=None) -> np.ndarray:
+        """(V, 3) world vertices of one pose (root rotation matrix, position, body (21, 3), extra), numpy."""
+        import torch
+
+        def tensor(values):
+            return torch.as_tensor(np.asarray(values, dtype=np.float64), dtype=self.dtype, device=self.device)
+
+        with torch.no_grad():
+            vertices, _ = self.pose(torch.zeros(1, 3, dtype=self.dtype, device=self.device), tensor(rotation)[None],
+                                    tensor(position)[None], tensor(body).reshape(1, 21, 3),
+                                    extra=(tensor(extra).reshape(1, -1) if self.layout.full and extra is not None
+                                           and len(extra) else None))
+        return vertices[0].cpu().numpy().astype(np.float64)
+
     def pose(self, omega, reference, position, body, subset=None, extra=None):
         """World vertices and joints of F frames: root rotation exp(omega) . reference."""
         from bodyscan.body.rotations import axis_angle_to_matrix
@@ -688,135 +867,216 @@ class Tracker:
         return posed.vertices, posed.joints
 
     # -- correspondences ------------------------------------------------------------------------
-    def match(self, vertices: np.ndarray, normals: np.ndarray, frame: FrameData,
-              max_distance: float | None = None, hidden: bool = False) -> FrameMatch:
-        """Correspondences of the points with the visible body, and the vertices in free space or in
-        front of the measured surface: of the visible vertices, and with 'hidden' of the limbs wherever
-        they are (stage 2, refine.free_space_hidden)."""
-        import torch
-        from bodyscan.dynamic.fitting import closest_points, visible_faces, visible_vertices
+    def view_visible(self, vertices: np.ndarray, normals: np.ndarray, number: int) -> np.ndarray:
+        """Vertices (V, 3) that sensor 'number' can see: facing it, and not behind another part of the body."""
+        from bodyscan.dynamic.fitting import visible_vertices
+        view = self.views[number]
+        if number == 0:
+            return visible_vertices(vertices, normals, view.geometry, self.sensor,
+                                    self.config.tracking.visibility_tolerance)
+        return visible_vertices(vertices, normals, view.geometry, view.position, self.config.tracking.visibility_tolerance,
+                                row_supersample=view.row_supersample)
+
+    def _sight_tests(self, vertices: np.ndarray, index: np.ndarray, frame_view: ViewFrame, frame_time: float):
+        """The free-space and in-front tests of the vertices 'index' (of vertices (V, 3), numpy) in the
+        image of one sensor: (free, front, pixel rows, pixel columns, measured ranges, time of the pixel
+        minus frame_time). Free space: the sensor saw (or, outside the crop, would have seen) beyond the
+        vertex, and the vertex would have been segmented as the person had it been there (closer than
+        the empty scene by the segmentation margin); a vertex behind furniture is not free. In front: a
+        vertex inside the person's silhouette closer than the measured surface."""
         c = self.config.tracking
-        g = self.geometry
-        visible = visible_vertices(vertices, normals, g, self.sensor, c.visibility_tolerance)
-        faces = visible_faces(self.faces_np, visible)
-        face_ids, bary, distance = closest_points(vertices, self.faces_np, frame.points_np, faces)
-        valid = np.flatnonzero(distance < (c.max_correspondence if max_distance is None else max_distance))
-        # the free-space and in-front tests: the visible vertices, and with 'hidden' the limbs wherever
-        # they are (behind the measured surface a vertex is neither free nor in front, so the measured
-        # ranges decide what hides it, not the model)
-        tested = visible | self.limb_vertices if hidden else visible
-        index = np.flatnonzero(tested)
+        view = self.views[frame_view.number]
+        g = view.geometry
         rows, cols, ranges = g.project(vertices[index])
-        unwrapped = g.column_distance_unwrapped(cols, frame.reference_column)
-        r0, c0 = frame.crop_origin
-        h, w = frame.mask.shape
+        unwrapped = g.column_distance_unwrapped(cols, frame_view.reference_column)
+        r0, c0 = frame_view.crop_origin
+        h, w = frame_view.mask.shape
         rr = np.round(rows - r0).astype(int)
         cc = np.round(unwrapped - c0).astype(int)
         in_view = (rows > -0.5) & (rows < g.height - 0.5)
+        if view.row_tolerance < 0.5:
+            # sparse beams: between two beams the sensor measured nothing
+            in_view &= np.abs(rows - np.round(rows)) <= view.row_tolerance
         in_crop = in_view & (rr >= 0) & (rr < h) & (cc >= 0) & (cc < w)
         rr_c, cc_c = np.clip(rr, 0, h - 1), np.clip(cc, 0, w - 1)
         pixel_rows = np.clip(np.round(rows).astype(int), 0, g.height - 1)
-        pixel_cols = np.mod(np.round(cols).astype(int), g.width)
-        measured = np.where(in_crop, frame.crop_range[rr_c, cc_c], np.nan)
+        pixel_cols = (np.mod(np.round(cols).astype(int), g.width) if view.wraps
+                      else np.clip(np.round(cols).astype(int), 0, g.width - 1))
+        measured = np.where(in_crop, frame_view.crop_range[rr_c, cc_c], np.nan)
         # outside the crop only the empty room is known: no person was found there
-        background = np.where(in_crop, frame.crop_background[rr_c, cc_c],
-                              self.background_range[pixel_rows, pixel_cols])
-        person = in_crop & frame.uncertain[rr_c, cc_c]
-        margin = max(c.free_space_margin, self.foreground_margin)
+        background = np.where(in_crop, frame_view.crop_background[rr_c, cc_c],
+                              view.background_range[pixel_rows, pixel_cols])
+        person = in_crop & frame_view.uncertain[rr_c, cc_c]
+        margin = max(c.free_space_margin, view.foreground_margin)
         with np.errstate(invalid="ignore"):
-            # free space: the sensor saw (or, outside the crop, would have seen) beyond the vertex, and the
-            # vertex would have been segmented as the person had it been there (closer than the empty
-            # scene by the segmentation margin); a vertex behind furniture is not free
             nearest = np.fmin(measured, background)
             beyond = np.isfinite(nearest) & (ranges < nearest - margin)
             free = in_view & ~person & beyond
             front = person & np.isfinite(measured) & (ranges < measured - margin)
         offsets = np.zeros(len(index))
-        if frame.crop_times is not None:
-            offsets = np.where(in_crop, frame.crop_times[rr_c, cc_c] - frame.time, 0.0)
+        if frame_view.crop_times is not None:
+            offsets = np.where(in_crop, frame_view.crop_times[rr_c, cc_c] - frame_time, 0.0)
+        return free, front, pixel_rows, pixel_cols, measured, offsets
+
+    def match(self, vertices: np.ndarray, normals: np.ndarray, frame: FrameData,
+              max_distance: float | None = None, hidden: bool = False) -> FrameMatch:
+        """Correspondences of every sensor's points with the body that sensor sees, and per sensor the
+        vertices in free space or in front of the measured surface: of the visible vertices, and with
+        'hidden' of the limbs wherever they are (stage 2, refine.free_space_hidden). In stage 1 the body
+        is moved to each additional sensor's time (FrameData.set_velocity)."""
+        import torch
+        from bodyscan.dynamic.fitting import closest_points, visible_faces
 
         def tensor(values, dtype=None):
             return torch.as_tensor(values, device=self.device, dtype=dtype)
 
-        return FrameMatch(tensor(valid), tensor(face_ids[valid]), tensor(bary[valid], self.dtype), tensor(index[free]),
-                          (tensor(pixel_rows[free]), tensor(pixel_cols[free])), tensor(index[front]),
-                          (tensor(pixel_rows[front]), tensor(pixel_cols[front])), tensor(measured[front], self.dtype),
-                          visible, max(int(visible.sum()), 1), offsets[free], offsets[front], distance)
+        c = self.config.tracking
+        reach = c.max_correspondence if max_distance is None else max_distance
+        n = len(frame.points_np)
+        face_ids = np.zeros(n, dtype=np.int64)
+        bary = np.zeros((n, 3))
+        distance = np.zeros(n)
+        point_shift = None
+        visible_any = np.zeros(len(vertices), dtype=bool)
+        views = []
+        for vf in frame.views:
+            moved = vertices if vf.shift is None else vertices + vf.shift
+            visible = self.view_visible(moved, normals, vf.number)
+            visible_any |= visible
+            if vf.count:
+                faces = visible_faces(self.faces_np, visible)
+                face_ids[vf.slice], bary[vf.slice], distance[vf.slice] = closest_points(
+                    moved, self.faces_np, frame.points_np[vf.slice], faces)
+                if vf.shift is not None:
+                    if point_shift is None:
+                        point_shift = np.zeros((n, 3))
+                    if np.ndim(vf.shift) == 1:
+                        point_shift[vf.slice] = vf.shift
+                    else:
+                        corners = self.faces_np[face_ids[vf.slice]]
+                        point_shift[vf.slice] = np.einsum("nk,nkd->nd", bary[vf.slice], vf.shift[corners])
+            # the free-space and in-front tests: the visible vertices, and with 'hidden' the limbs wherever
+            # they are (behind the measured surface a vertex is neither free nor in front, so the measured
+            # ranges decide what hides it, not the model)
+            tested = visible | self.limb_vertices if hidden else visible
+            index = np.flatnonzero(tested)
+            free, front, rows, cols, measured, offsets = self._sight_tests(moved, index, vf, frame.time)
+            views.append(ViewMatch(vf.number, vf, tensor(index[free]), (tensor(rows[free]), tensor(cols[free])),
+                                   tensor(index[front]), (tensor(rows[front]), tensor(cols[front])),
+                                   tensor(measured[front], self.dtype), visible, max(int(visible.sum()), 1),
+                                   offsets[free], offsets[front], vf.shift_t))
+        valid = np.flatnonzero(distance < reach)
+        first = views[0]
+        # the vertices in free space (or in front) of any sensor, each once: their share of the visible body
+        # stays comparable with one sensor's (explain, the searches, the quality numbers)
+        silhouette = first.silhouette if len(views) == 1 else torch.unique(torch.cat([v.silhouette for v in views]))
+        front = first.front if len(views) == 1 else torch.unique(torch.cat([v.front for v in views]))
+        return FrameMatch(tensor(valid), tensor(face_ids[valid]), tensor(bary[valid], self.dtype), silhouette,
+                          first.silhouette_pixels, front, first.front_pixels, first.front_range,
+                          visible_any, max(int(visible_any.sum()), 1), first.silhouette_offsets,
+                          first.front_offsets, distance, views,
+                          None if point_shift is None else tensor(point_shift[valid], self.dtype))
 
     def in_sight(self, vertices: np.ndarray, frame: FrameData) -> np.ndarray:
-        """Per vertex (N, 3): where the sensor measured something else, so it would have seen the
+        """Per vertex (N, 3): where some sensor measured something else, so it would have seen the
         vertex there: empty space beyond it outside the person, or a surface behind it inside (the
         free-space and in-front tests of match() for any vertices, visible or not)."""
-        c = self.config.tracking
-        g = self.geometry
-        rows, cols, ranges = g.project(vertices)
-        unwrapped = g.column_distance_unwrapped(cols, frame.reference_column)
-        r0, c0 = frame.crop_origin
-        h, w = frame.mask.shape
-        rr = np.round(rows - r0).astype(int)
-        cc = np.round(unwrapped - c0).astype(int)
-        in_view = (rows > -0.5) & (rows < g.height - 0.5)
-        in_crop = in_view & (rr >= 0) & (rr < h) & (cc >= 0) & (cc < w)
-        rr_c, cc_c = np.clip(rr, 0, h - 1), np.clip(cc, 0, w - 1)
-        pixel_rows = np.clip(np.round(rows).astype(int), 0, g.height - 1)
-        pixel_cols = np.mod(np.round(cols).astype(int), g.width)
-        measured = np.where(in_crop, frame.crop_range[rr_c, cc_c], np.nan)
-        background = np.where(in_crop, frame.crop_background[rr_c, cc_c],
-                              self.background_range[pixel_rows, pixel_cols])
-        person = in_crop & frame.uncertain[rr_c, cc_c]
-        margin = max(c.free_space_margin, self.foreground_margin)
-        with np.errstate(invalid="ignore"):
-            nearest = np.fmin(measured, background)
-            free = in_view & ~person & np.isfinite(nearest) & (ranges < nearest - margin)
-            front = person & np.isfinite(measured) & (ranges < measured - margin)
-        return free | front
+        index = np.arange(len(vertices))
+        sighted = np.zeros(len(vertices), dtype=bool)
+        for vf in frame.views:
+            moved = vertices if vf.shift is None else vertices + vf.shift
+            free, front, *_ = self._sight_tests(moved, index, vf, frame.time)
+            sighted |= free | front
+        return sighted
 
     # -- energy of one frame --------------------------------------------------------------------
     def frame_energy(self, vertices, frame: FrameData, match: FrameMatch, shifted_points=None,
-                     shifted_silhouette=None, shifted_front=None, scale: float | None = None):
+                     shifted_silhouette=None, shifted_front=None, scale: float | None = None,
+                     shifted_views=None):
         """Data, silhouette, front and floor terms of one frame (vertices (V, 3) torch).
         shifted_points: optional (M, 3) model points already moved to the point times;
-        shifted_silhouette, shifted_front: the vertices of those terms moved to the times of their pixels;
+        shifted_views: per sensor (match.views) the vertices of its silhouette and front terms moved to
+        the times of their pixels (shifted_silhouette, shifted_front: the same for the Ouster alone);
         scale: robust scale of the data term (default robust_scale; the normalisation stays that of
-        robust_scale, so a larger scale widens the reach without changing the weight of small residuals)."""
+        robust_scale, so a larger scale widens the reach without changing the weight of small residuals).
+        Points of an additional sensor count divided by its noise relative to the Ouster's."""
         import torch
-        from bodyscan.dynamic.fitting import face_normals, geman_mcclure, sample_map, surface_points
+        from bodyscan.dynamic.fitting import face_normals, geman_mcclure, surface_points
         c = self.config.tracking
         s2 = c.robust_scale ** 2
         data_scale = c.robust_scale if scale is None else scale
         energy = vertices.new_zeros(())
         if len(match.point_index):
             points = frame.points[match.point_index]
-            model_points = (surface_points(vertices, self.faces, match.face_ids, match.bary)
-                            if shifted_points is None else shifted_points)
+            if shifted_points is None:
+                model_points = surface_points(vertices, self.faces, match.face_ids, match.bary)
+                if match.point_shift is not None:
+                    model_points = model_points + match.point_shift
+            else:
+                model_points = shifted_points
             normals = face_normals(vertices, self.faces, match.face_ids)
             diff = points - model_points
             plane = (diff * normals).sum(-1)
-            energy = energy + (geman_mcclure(plane, data_scale).mean()
-                               + c.point_to_point * geman_mcclure(diff.norm(dim=-1), data_scale).mean()) / s2
-        g = self.geometry
-        r0, c0 = frame.crop_origin
-        h, w = frame.mask.shape
-        if len(match.silhouette):
-            moved = vertices[match.silhouette] if shifted_silhouette is None else shifted_silhouette
-            rows, cols, ranges = g.project_torch(moved, self.tables, frame.reference_column, match.silhouette_pixels)
+            if frame.point_sigma is None:
+                energy = energy + (geman_mcclure(plane, data_scale).mean()
+                                   + c.point_to_point * geman_mcclure(diff.norm(dim=-1), data_scale).mean()) / s2
+            else:
+                sigma = frame.point_sigma[match.point_index]
+                energy = energy + (geman_mcclure(plane / sigma, data_scale).mean()
+                                   + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale).mean()) / s2
+        if shifted_views is None and (shifted_silhouette is not None or shifted_front is not None):
+            shifted_views = [(shifted_silhouette, shifted_front)]
+        for number, view_match in enumerate(match.views):
+            moved = shifted_views[number] if shifted_views is not None else (None, None)
+            energy = self.add_sight_energy(energy, vertices, view_match, moved[0], moved[1])
+        feet_z = vertices[self.feet, 2]
+        energy = energy + c.floor_weight * (torch.relu(-feet_z) ** 2).mean() / s2
+        return energy
+
+    def add_sight_energy(self, energy, vertices, view_match: ViewMatch, shifted_silhouette=None, shifted_front=None):
+        """'energy' plus the silhouette (free-space) and front terms of one sensor: vertices (V, 3) torch;
+        shifted_*: those vertices already moved to the times of their pixels (stage 2)."""
+        import torch
+        from bodyscan.dynamic.fitting import sample_map
+        c = self.config.tracking
+        s2 = c.robust_scale ** 2
+        view = self.views[view_match.number]
+        g = view.geometry
+        tables = self.view_tables[view_match.number]
+        vf = view_match.frame
+        weight = view.weight * c.silhouette_weight
+        r0, c0 = vf.crop_origin
+        h, w = vf.mask.shape
+        if len(view_match.silhouette):
+            if shifted_silhouette is not None:
+                moved = shifted_silhouette
+            else:
+                moved = vertices[view_match.silhouette]
+                if view_match.shift is not None:
+                    moved = moved + (view_match.shift if view_match.shift.dim() == 1
+                                     else view_match.shift[view_match.silhouette])
+            rows, cols, ranges = g.project_torch(moved, tables, vf.reference_column, view_match.silhouette_pixels)
             rr, cc = rows - r0, cols - c0
-            inside = sample_map(frame.distance, rr, cc)
+            inside = sample_map(vf.distance, rr, cc)
             out_r = torch.relu(-rr) + torch.relu(rr - (h - 1))
             out_c = torch.relu(-cc) + torch.relu(cc - (w - 1))
             angle = inside + torch.sqrt((out_r * g.vertical_step) ** 2 + (out_c * g.column_step) ** 2 + 1e-12)
             lateral = angle * ranges
             scale = c.silhouette_scale
-            energy = energy + (c.silhouette_weight * free_space_loss(lateral, scale, c.free_space_loss).sum()
-                               / scale ** 2 / match.visible_count)
-        if len(match.front):
-            moved = vertices[match.front] if shifted_front is None else shifted_front
-            _, _, ranges = g.project_torch(moved, self.tables, frame.reference_column, match.front_pixels)
-            excess = torch.relu(match.front_range - ranges - c.free_space_margin)
-            energy = energy + (c.silhouette_weight * free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
-                               / s2 / match.visible_count)
-        feet_z = vertices[self.feet, 2]
-        energy = energy + c.floor_weight * (torch.relu(-feet_z) ** 2).mean() / s2
+            energy = energy + (weight * free_space_loss(lateral, scale, c.free_space_loss).sum()
+                               / scale ** 2 / view_match.visible_count)
+        if len(view_match.front):
+            if shifted_front is not None:
+                moved = shifted_front
+            else:
+                moved = vertices[view_match.front]
+                if view_match.shift is not None:
+                    moved = moved + (view_match.shift if view_match.shift.dim() == 1
+                                     else view_match.shift[view_match.front])
+            _, _, ranges = g.project_torch(moved, tables, vf.reference_column, view_match.front_pixels)
+            excess = torch.relu(view_match.front_range - ranges - c.free_space_margin)
+            energy = energy + (weight * free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
+                               / s2 / view_match.visible_count)
         return energy
 
     # -- stage 1 ----------------------------------------------------------------------------------
@@ -926,6 +1186,87 @@ class Tracker:
         return (rotation, pos.detach()[0].cpu().numpy().astype(np.float64),
                 b.detach()[0].cpu().numpy().astype(np.float64), energy_value, match, fitted_extra)
 
+    def search_hands(self, frame: FrameData, fitted, prediction=None):
+        """full55, stage 1: each hand with at least hand_search_points points within hand_radius of its middle
+        knuckle is fitted again with the body and the other hand fixed, from its fitted coefficients and from
+        hand_starts starts of its first PCA coefficient (0 to -hand_start_spread: open to closed), two
+        correspondence rounds each; the start of lowest energy (the frame's terms and the extra priors with
+        the stage-1 continuity) is kept. Returns the fit with the chosen hand coefficients."""
+        import torch
+        from bodyscan.body.model import vertex_normals
+        c = self.config.tracking
+        layout = self.layout
+        if not layout.full or layout.hand_count == 0 or c.hand_starts <= 0 or len(frame.points_np) == 0:
+            return fitted
+        rotation, position, body, energy, match, extra = fitted[:6]
+        centers = self.hand_centers(np.asarray(rotation)[None], np.asarray(position)[None], np.asarray(body)[None])[0]
+        near = np.linalg.norm(frame.points_np[:, None] - centers[None], axis=2) < c.hand_radius           # (N, 2)
+        dev, dt = self.device, self.dtype
+        reference_t = torch.as_tensor(rotation, dtype=dt, device=dev).reshape(1, 3, 3)
+        zero = torch.zeros(1, 3, dtype=dt, device=dev)
+        pos = torch.as_tensor(position, dtype=dt, device=dev).reshape(1, 3)
+        b = torch.as_tensor(body, dtype=dt, device=dev).reshape(1, 21, 3)
+        pred_extra = None
+        if prediction is not None and len(prediction) > 3 and prediction[3] is not None:
+            pred_extra = torch.as_tensor(prediction[3], dtype=dt, device=dev).reshape(1, -1)
+        best_extra = np.array(extra, dtype=np.float64)
+        count = layout.hand_count
+        changed = False
+        for hand in range(2):
+            if near[:, hand].sum() < c.hand_search_points:
+                continue
+            index = layout.face_size + hand * count + np.arange(count)
+            index_t = torch.as_tensor(index, device=dev)
+            starts = [best_extra[index].copy()]
+            for k in range(c.hand_starts):
+                start = np.zeros(count)
+                start[0] = -c.hand_start_spread * k / max(c.hand_starts - 1, 1)
+                starts.append(start)
+            results = []
+            for start in starts:
+                base = torch.as_tensor(best_extra, dtype=dt, device=dev).reshape(1, -1)
+                h = torch.as_tensor(start, dtype=dt, device=dev).reshape(1, count).clone().requires_grad_(True)
+
+                def assemble():
+                    e = base.clone()
+                    e[:, index_t] = h
+                    return e
+
+                def rematch():
+                    with torch.no_grad():
+                        vertices, _ = self.pose(zero, reference_t, pos, b, extra=assemble())
+                        normals = vertex_normals(vertices, self.faces)
+                    return self.match(vertices[0].cpu().numpy().astype(np.float64),
+                                      normals[0].cpu().numpy().astype(np.float64), frame)
+
+                def total(current):
+                    vertices, _ = self.pose(zero, reference_t, pos, b, extra=assemble())
+                    return (self.frame_energy(vertices[0], frame, current)
+                            + extra_priors(layout, assemble(), c, pred_extra))
+
+                for _ in range(2):
+                    current = rematch()
+                    optimizer = torch.optim.LBFGS([h], lr=1.0, max_iter=15, history_size=10,
+                                                  line_search_fn="strong_wolfe")
+
+                    def closure():
+                        optimizer.zero_grad()
+                        value = total(current)
+                        value.backward()
+                        return value
+
+                    optimizer.step(closure)
+                with torch.no_grad():
+                    value = float(total(rematch()))
+                results.append((value, h.detach()[0].cpu().numpy().astype(np.float64)))
+            value, coefficients = min(results, key=lambda item: item[0])
+            if not np.allclose(coefficients, best_extra[index]):
+                best_extra[index] = coefficients
+                changed = True
+        if not changed:
+            return fitted
+        return (rotation, position, body, energy, match, best_extra)
+
     def residual(self, rotation, position, body, frame: FrameData) -> float:
         """Median distance [m] from the frame's points to the visible body surface."""
         return float(np.median(self.explain(rotation, position, body, frame)["distance"]))
@@ -958,12 +1299,21 @@ class Tracker:
         # to search the limbs again
         far = (distance > c.recover_distance) & (distance < c.max_correspondence)
         free = match.silhouette.cpu().numpy() if len(match.silhouette) else np.zeros(0, dtype=np.int64)
+        free_share = self.free_share(match)
         return {"distance": distance, "unexplained": float(np.mean(far)), "unexplained_count": int(far.sum()),
-                "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * len(match.silhouette) / match.visible_count),
-                "visible": match.visible, "far": far, "free": len(match.silhouette) / match.visible_count,
+                "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * free_share),
+                "visible": match.visible, "far": far, "free": free_share,
                 "free_vertices": free,
                 "observed_parts": self.observed_parts(vertices[0].cpu().numpy().astype(np.float64), match.visible,
                                                       frame)}
+
+    def free_share(self, match: FrameMatch) -> float:
+        """Share of the visible body in free space of some sensor: by vertex count with the Ouster alone (as
+        before several sensors existed), by surface area with several."""
+        if self.vertex_area is None:
+            return len(match.silhouette) / match.visible_count
+        free = match.silhouette.cpu().numpy() if len(match.silhouette) else np.zeros(0, dtype=np.int64)
+        return float(self.vertex_area[free].sum() / max(self.vertex_area[match.visible].sum(), 1e-12))
 
     def observed_parts(self, vertices: np.ndarray, visible: np.ndarray, frame: FrameData) -> np.ndarray:
         """Per body part (skeleton.PART_NAMES) the fraction of its vertices that the sensor sees with
@@ -1137,12 +1487,19 @@ class Tracker:
         warmed_frames = 0
         slots, restarts, observed, scores = [], [], [], []
         searched = refused = turned = connected = facing_refused = 0
+        hands_searched = 0
         poor_run, last_check, since = 0, -10 ** 9, 0
         prediction = None
         progress = Progress("tracked frames", stop - start)
         for k in range(start, stop):
             person = self.segmented.load(k)
             frame = self.frame_data(person)
+            if self.extra is not None and len(positions) >= 2 and not restarts[-1] and times[-1] > times[-2]:
+                # additional sensors measured a few tens of milliseconds before or after the Ouster: every
+                # vertex moves to their time with its velocity over the last two frames
+                frame.set_velocity((self.vertices_of(rotations[-1], positions[-1], bodies[-1], extras[-1])
+                                    - self.vertices_of(rotations[-2], positions[-2], bodies[-2], extras[-2]))
+                                   / (times[-1] - times[-2]))
             restarted = False
             warmed = warm is not None and int(person.index) in warm
             if warmed:
@@ -1230,6 +1587,12 @@ class Tracker:
                             turned += 1
                             connected += len(refits)
                             poor_run = 0
+            if c.hand_starts > 0 and self.layout.full and not warmed:
+                searched_hands = self.search_hands(frame, result, None if restarted else prediction)
+                if searched_hands is not result:
+                    result = searched_hands
+                    explained = self.explain_fit(result, frame)
+                    hands_searched += 1
             if restarted:
                 since = len(rotations)          # the turn limit counts from the frames after a new start
             rotation, position, body, energy = result[:4]
@@ -1251,6 +1614,8 @@ class Tracker:
             info(f"  {warmed_frames} of {len(rotations)} frames fitted from the warm-start motion")
         if searched:
             info(f"  limbs searched again in {searched} frames (points left unexplained by the fit)")
+        if hands_searched:
+            info(f"  hands changed by the search from several starts in {hands_searched} frames")
         if refused or turned or facing_refused:
             info(f"  turns of the whole body refused in {refused} frames (faster than {c.max_turn_rate:g} deg/s); "
                  f"facing changed after a poor fit in {turned} frames ({connected} frames before fitted again to "
@@ -1484,37 +1849,47 @@ class Tracker:
 
     def _sight_energy(self, vertices, frame: FrameData, match: FrameMatch, members: np.ndarray):
         """The free-space and in-front terms of frame_energy for the vertices 'members' of one limb only,
-        per vertex of the limb (vertices (V, 3) torch; match from match(..., hidden=True))."""
+        per vertex of the limb, summed over the sensors (vertices (V, 3) torch; match from
+        match(..., hidden=True))."""
         import torch
         from bodyscan.dynamic.fitting import sample_map
         c = self.config.tracking
-        g = self.geometry
         count = max(len(members), 1)
         energy = vertices.new_zeros(())
-        free = np.isin(match.silhouette.cpu().numpy(), members)
-        front = np.isin(match.front.cpu().numpy(), members)
-        if free.any():
-            keep = torch.as_tensor(free, device=self.device)
-            index = match.silhouette[keep]
-            pixels = (match.silhouette_pixels[0][keep], match.silhouette_pixels[1][keep])
-            rows, cols, ranges = g.project_torch(vertices[index], self.tables, frame.reference_column, pixels)
-            r0, c0 = frame.crop_origin
-            h, w = frame.mask.shape
-            rr, cc = rows - r0, cols - c0
-            out_r = torch.relu(-rr) + torch.relu(rr - (h - 1))
-            out_c = torch.relu(-cc) + torch.relu(cc - (w - 1))
-            angle = sample_map(frame.distance, rr, cc) + torch.sqrt((out_r * g.vertical_step) ** 2
-                                                                    + (out_c * g.column_step) ** 2 + 1e-12)
-            scale = c.silhouette_scale
-            energy = energy + free_space_loss(angle * ranges, scale, c.free_space_loss).sum() / scale ** 2 / count
-        if front.any():
-            keep = torch.as_tensor(front, device=self.device)
-            index = match.front[keep]
-            pixels = (match.front_pixels[0][keep], match.front_pixels[1][keep])
-            _, _, ranges = g.project_torch(vertices[index], self.tables, frame.reference_column, pixels)
-            excess = torch.relu(match.front_range[keep] - ranges - c.free_space_margin)
-            energy = energy + (free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
-                               / c.robust_scale ** 2 / count)
+        for view_match in match.views:
+            view = self.views[view_match.number]
+            g = view.geometry
+            tables = self.view_tables[view_match.number]
+            vf = view_match.frame
+            free = np.isin(view_match.silhouette.cpu().numpy(), members)
+            front = np.isin(view_match.front.cpu().numpy(), members)
+            if free.any():
+                keep = torch.as_tensor(free, device=self.device)
+                index = view_match.silhouette[keep]
+                pixels = (view_match.silhouette_pixels[0][keep], view_match.silhouette_pixels[1][keep])
+                moved = vertices[index] if view_match.shift is None else vertices[index] + (
+                    view_match.shift if view_match.shift.dim() == 1 else view_match.shift[index])
+                rows, cols, ranges = g.project_torch(moved, tables, vf.reference_column, pixels)
+                r0, c0 = vf.crop_origin
+                h, w = vf.mask.shape
+                rr, cc = rows - r0, cols - c0
+                out_r = torch.relu(-rr) + torch.relu(rr - (h - 1))
+                out_c = torch.relu(-cc) + torch.relu(cc - (w - 1))
+                angle = sample_map(vf.distance, rr, cc) + torch.sqrt((out_r * g.vertical_step) ** 2
+                                                                     + (out_c * g.column_step) ** 2 + 1e-12)
+                scale = c.silhouette_scale
+                energy = energy + (view.weight * free_space_loss(angle * ranges, scale, c.free_space_loss).sum()
+                                   / scale ** 2 / count)
+            if front.any():
+                keep = torch.as_tensor(front, device=self.device)
+                index = view_match.front[keep]
+                pixels = (view_match.front_pixels[0][keep], view_match.front_pixels[1][keep])
+                moved = vertices[index] if view_match.shift is None else vertices[index] + (
+                    view_match.shift if view_match.shift.dim() == 1 else view_match.shift[index])
+                _, _, ranges = g.project_torch(moved, tables, vf.reference_column, pixels)
+                excess = torch.relu(view_match.front_range[keep] - ranges - c.free_space_margin)
+                energy = energy + (view.weight * free_space_loss(excess, c.robust_scale, c.free_space_loss).sum()
+                                   / c.robust_scale ** 2 / count)
         return energy
 
     def hide_guessed_limbs(self, result: dict, rounds: int = 2, batch: int = 16) -> int:
@@ -1839,8 +2214,8 @@ class Tracker:
 
                     point_offsets = frame.point_times[match.point_index.cpu().numpy()] - times[k]
                     shutter.append({"before": before, "after": after, "points": factor(point_offsets),
-                                    "silhouette": factor(match.silhouette_offsets),
-                                    "front": factor(match.front_offsets)})
+                                    "views": [(factor(v.silhouette_offsets), factor(v.front_offsets))
+                                              for v in match.views]})
                 tensors = [omega_f, pos_f, b_f] + ([x_f] if full and self.layout.size else [])
                 if full:
                     hand_hidden = torch.as_tensor(1.0 + r.hidden_smoothness * self.hidden_factor(seen[:, wrists]),
@@ -1866,12 +2241,13 @@ class Tracker:
                                     surface_points(vertices[i], self.faces, match.face_ids, match.bary)
                                     + s["points"][:, None] * surface_points(step, self.faces, match.face_ids,
                                                                             match.bary))
-                            if len(match.silhouette):
-                                moved["shifted_silhouette"] = (vertices[i][match.silhouette]
-                                                               + s["silhouette"][:, None] * step[match.silhouette])
-                            if len(match.front):
-                                moved["shifted_front"] = (vertices[i][match.front]
-                                                          + s["front"][:, None] * step[match.front])
+                            # per sensor: the vertices of its silhouette and front terms at the times of
+                            # their pixels
+                            moved["shifted_views"] = [
+                                ((vertices[i][v.silhouette] + fs[:, None] * step[v.silhouette])
+                                 if len(v.silhouette) else None,
+                                 (vertices[i][v.front] + ff[:, None] * step[v.front]) if len(v.front) else None)
+                                for v, (fs, ff) in zip(match.views, s["views"])]
                         energy = energy + self.frame_energy(vertices[i], data[k], match, scale=scale, **moved)
                     energy = energy / count + c.limit_weight * limit_penalty(bb) / count
                     if c.hinge_weight > 0:
@@ -1981,6 +2357,14 @@ class Tracker:
         heldout_finger_median = np.full(frames, np.nan)
         pooled = {"fit": [], "fit_hands": [], "heldout": [], "heldout_hands": [], "fit_fingers": [],
                   "heldout_fingers": []}
+        multi = len(self.views) > 1
+        sensor_median = np.full((frames, len(self.views)), np.nan)          # per frame and sensor [m]
+        sensor_heldout_median = np.full((frames, len(self.views)), np.nan)
+        sensor_points = np.zeros((frames, len(self.views)), dtype=np.int64)
+        for view in self.views:
+            pooled[f"fit_{view.name}"] = []
+            pooled[f"heldout_{view.name}"] = []
+        times_all = result["times"]
         finger_radius = self.config.tracking.finger_radius
 
         def near_fingers(points, joints):
@@ -2016,12 +2400,20 @@ class Tracker:
                                              extra=self.extra_tensor(result, span))
                 normals = vertex_normals(vertices, self.faces)
             joints_out[span] = joints.cpu().numpy()
+            vertices_np_all = vertices.cpu().numpy().astype(np.float64) if multi else None
             for i, k in enumerate(span):
                 frame = self.load_frame(int(result["slot"][k]))
+                if multi and len(span) >= 2:
+                    # every vertex's velocity (central difference within the batch) moves the body to each
+                    # additional sensor's time, as in stage 1
+                    a, b = max(i - 1, 0), min(i + 1, len(span) - 1)
+                    gap = times_all[span[b]] - times_all[span[a]]
+                    if gap > 0:
+                        frame.set_velocity((vertices_np_all[b] - vertices_np_all[a]) / gap)
                 v = vertices[i].cpu().numpy().astype(np.float64)
-                match = self.match(v, normals[i].cpu().numpy().astype(np.float64), frame)
-                _, _, distance = closest_points(v, self.faces_np, frame.points_np,
-                                                visible_faces(self.faces_np, match.visible))
+                normals_np = normals[i].cpu().numpy().astype(np.float64)
+                match = self.match(v, normals_np, frame)
+                distance = match.distance                   # each point against the body its sensor sees
                 residual_median[k] = np.median(distance)
                 residual_p90[k] = np.percentile(distance, 90)
                 centers = (hand_centers[k] if hand_centers is not None
@@ -2038,9 +2430,23 @@ class Tracker:
                     pooled["fit_fingers"].append(distance[fit_fingers])
                     if fit_fingers.any():
                         finger_median[k] = np.median(distance[fit_fingers])
+                if multi:
+                    for vm in match.views:
+                        mine = distance[vm.frame.slice]
+                        sensor_points[k, vm.number] = len(mine)
+                        if len(mine):
+                            sensor_median[k, vm.number] = np.median(mine)
+                            pooled[f"fit_{self.views[vm.number].name}"].append(mine)
                 if len(frame.heldout_np):
-                    _, _, held = closest_points(v, self.faces_np, frame.heldout_np,
-                                                visible_faces(self.faces_np, match.visible))
+                    if multi:
+                        held = self.heldout_distances(v, normals_np, frame, match)
+                        for number in np.unique(frame.heldout_view):
+                            mine = held[frame.heldout_view == number]
+                            sensor_heldout_median[k, number] = np.median(mine)
+                            pooled[f"heldout_{self.views[number].name}"].append(mine)
+                    else:
+                        _, _, held = closest_points(v, self.faces_np, frame.heldout_np,
+                                                    visible_faces(self.faces_np, match.visible))
                     held_near, _ = near_hands(frame.heldout_np, centers)
                     heldout_median[k] = np.median(held)
                     heldout_p90[k] = np.percentile(held, 90)
@@ -2062,7 +2468,7 @@ class Tracker:
                 # that stage 2 also tests include the back of every limb along the edge of its silhouette, a
                 # pixel out by the discretisation (about 1 % of the visible count on the truth of synthetic
                 # takes), which would flag most frames
-                violation[k] = len(match.silhouette) / match.visible_count
+                violation[k] = self.free_share(match)
                 floor[k] = v[self.feet_np, 2].min()
                 arm_in_trunk[k] = self.collision.depth(v, normals[i].cpu().numpy().astype(np.float64))
                 # observed: visible vertices with a point of the person within 2 robust scales
@@ -2088,7 +2494,32 @@ class Tracker:
                 **({"finger_points": finger_points, "finger_residual_median": finger_median,
                     "heldout_finger_points": heldout_finger_points,
                     "heldout_finger_residual_median": heldout_finger_median} if finger_joints is not None else {}),
+                **({"sensor_names": [view.name for view in self.views], "sensor_residual_median": sensor_median,
+                    "sensor_heldout_residual_median": sensor_heldout_median, "sensor_points": sensor_points}
+                   if multi else {}),
                 "pooled": summary}
+
+    def heldout_distances(self, vertices: np.ndarray, normals: np.ndarray, frame: FrameData,
+                          match: FrameMatch) -> np.ndarray:
+        """Distance [m] of every held-out point of a frame to the body its own sensor sees (sensors left out
+        of the fit: their visible body at their own time)."""
+        from bodyscan.dynamic.fitting import closest_points, visible_faces
+        held = np.zeros(len(frame.heldout_np))
+        matched = {vm.number: vm for vm in match.views}
+        left_out = {f.number: f for f in frame.left_out}
+        for number in np.unique(frame.heldout_view):
+            pick = frame.heldout_view == number
+            if int(number) in matched:
+                vm = matched[int(number)]
+                moved = vertices if vm.frame.shift is None else vertices + vm.frame.shift
+                visible = vm.visible
+            else:
+                f = left_out[int(number)]
+                moved = vertices if f.shift is None else vertices + f.shift
+                visible = self.view_visible(moved, normals, int(number))
+            _, _, held[pick] = closest_points(moved, self.faces_np, frame.heldout_np[pick],
+                                              visible_faces(self.faces_np, visible))
+        return held
 
     def hand_joints(self, root_matrix: np.ndarray, root_position: np.ndarray, body: np.ndarray,
                     batch: int = 64) -> tuple[np.ndarray, np.ndarray]:
@@ -2190,6 +2621,22 @@ def quality_summary(quality: dict, config: TrackPipelineConfig) -> dict:
         out["finger_residual_pooled"] = mm("fit_fingers")
         out["finger_points_per_frame"] = _spread(quality["finger_points"])
         out["finger_radius_m"] = config.tracking.finger_radius
+    if "sensor_names" in quality:
+        # per sensor: the median over frames of each frame's median point distance, the pooled numbers, and
+        # the share of frames in which the sensor saw the person
+        sensors = {}
+        for number, name in enumerate(quality["sensor_names"]):
+            per_frame = quality["sensor_residual_median"][:, number]
+            held = quality["sensor_heldout_residual_median"][:, number]
+            sensors[name] = {"frames_seen": float(np.mean(quality["sensor_points"][:, number] > 0)),
+                             "points_per_frame": _spread(quality["sensor_points"][:, number]),
+                             "residual_median_mm": (float(1000 * np.nanmedian(per_frame)) if np.isfinite(per_frame).any()
+                                                    else None),
+                             "residual_pooled": mm(f"fit_{name}"),
+                             "heldout_residual_median_mm": (float(1000 * np.nanmedian(held)) if np.isfinite(held).any()
+                                                            else None),
+                             "heldout_residual_pooled": mm(f"heldout_{name}")}
+        out["sensors"] = sensors
     if config.tracking.holdout_fraction > 0:
         out["heldout"] = {"fraction": config.tracking.holdout_fraction, "seed": config.tracking.holdout_seed,
                           "residual_pooled": mm("heldout"), "hand_residual_pooled": mm("heldout_hands"),
@@ -2255,8 +2702,12 @@ def save_motion(path, result: dict, quality: dict, contacts: np.ndarray, flags: 
     added = {name: quality[name] for name in ("hand_points", "hand_residual_median", "heldout_residual_median",
                                               "heldout_residual_p90", "heldout_hand_residual_median",
                                               "heldout_hand_points", "finger_points", "finger_residual_median",
-                                              "heldout_finger_points", "heldout_finger_residual_median")
+                                              "heldout_finger_points", "heldout_finger_residual_median",
+                                              "sensor_residual_median", "sensor_heldout_residual_median",
+                                              "sensor_points")
              if name in quality}
+    if "sensor_names" in quality:
+        added["sensor_names"] = np.array(quality["sensor_names"], dtype=str)
     frames = len(result["times"])
     np.savez_compressed(path, times=result["times"], root_rotation=result["root_rotation"],
                         root_position=result["root_position"], body=result["body"],
@@ -2299,6 +2750,12 @@ def summary_text(summary: dict) -> str:
         lines.append(f"  held-out points ({held['fraction']:.0%}): median {held['residual_pooled']['median_mm']:.1f} mm, "
                      f"p90 {held['residual_pooled']['p90_mm']:.1f} mm; near the hands median "
                      f"{held['hand_residual_pooled']['median_mm']:.1f} mm, p90 {held['hand_residual_pooled']['p90_mm']:.1f} mm")
+    for name, entry in summary.get("sensors", {}).items():
+        lines.append(f"  {name}: person seen in {entry['frames_seen']:.0%} of the frames, median "
+                     f"{entry['points_per_frame']['median']:.0f} points; points to body median "
+                     + (f"{entry['residual_median_mm']:.1f} mm" if entry["residual_median_mm"] is not None else "-")
+                     + (f", held out {entry['heldout_residual_median_mm']:.1f} mm"
+                        if entry["heldout_residual_median_mm"] is not None else ""))
     if summary.get("pose_model") == "full55":
         lines.append(f"  jaw rotation median {summary['jaw_deg']['median']:.2f} deg (max {summary['jaw_deg']['max']:.2f}); "
                      f"eyes median {summary['left_eye_deg']['median']:.2f} and {summary['right_eye_deg']['median']:.2f} deg")
@@ -2368,6 +2825,10 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
     if config.tracking.holdout_fraction > 0:
         info(f"  {config.tracking.holdout_fraction:.0%} of the points of every frame held out of the fit "
              f"(seed {config.tracking.holdout_seed})")
+    if tracker.extra is not None:
+        for entry in tracker.extra.summary()["sensors"]:
+            info(f"  additional sensor {entry['name']}: {entry['frames']} frames, noise x{entry['sigma']:g} the "
+                 f"Ouster's, free-space weight {entry['weight']:g}" + ("" if entry["fitted"] else ", held out"))
     result = tracker.track(start, stop, warm)
     prepared = None
     if config.refine.enabled and len(result["times"]) >= 3:
@@ -2424,6 +2885,8 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
         extra["init_motion_sha1"] = provenance["init_motion_sha1"]
     extra["model_sha1"] = avatar.model_sha1
     extra["threads"] = int(torch.get_num_threads())
+    if tracker.extra is not None:
+        extra["extra_sensors"] = tracker.extra.summary()
     summary = save_motion(out, result, quality, contacts, flags, avatar_path, avatar, config, extra, layout, provenance)
     if joints_csv:
         write_joints_csv(joints_csv, result["times"], quality["joints"])
