@@ -54,6 +54,15 @@ class ExtraSegmentationConfig:
     crop_gate: bool = False             # the crop covers the gate cylinder (else the person's pixels only)
     voxel: float = 0.0                  # m: keep one point per voxel of this size (0: every pixel); a dense
                                         # depth camera otherwise outnumbers the LiDARs with correlated errors
+    # range bias of the sensor on the person, added to the range of every foreground pixel (the empty scene
+    # keeps its ranges): b0 + b1 (r - r_ref), r clipped to [r_min, r_max]. A LiDAR can read a dark suit
+    # several centimetres short although it measures the room right (the Helios 16P of 3 Nov: +8 cm at 4 m,
+    # fitted on the person against the avatar fitted to the Ouster).
+    foreground_range_b0: float = 0.0    # m
+    foreground_range_b1: float = 0.0    # m per m
+    foreground_range_ref: float = 4.0   # m
+    foreground_range_min: float = 0.0   # m
+    foreground_range_max: float = 100.0  # m
 
 
 def dilate(mask: np.ndarray, steps: int) -> np.ndarray:
@@ -186,6 +195,11 @@ class ExtraSegmenter:
             jump = np.maximum(c.edge_jump, c.edge_relative * np.nan_to_num(range_m, nan=0.0))
             if c.edge_jump > 0:
                 mask &= ~mixed_pixels(range_m, jump, self.wraps)
+        if c.foreground_range_b0 != 0.0 or c.foreground_range_b1 != 0.0:
+            range_m = range_m.copy()
+            measured = range_m[mask]
+            clipped = np.clip(measured, c.foreground_range_min, c.foreground_range_max)
+            range_m[mask] = measured + c.foreground_range_b0 + c.foreground_range_b1 * (clipped - c.foreground_range_ref)
         rows, cols = np.nonzero(mask)
         if len(rows) < c.min_points:
             return None

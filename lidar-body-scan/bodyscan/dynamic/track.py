@@ -528,6 +528,8 @@ class ViewFrame:
         self.slice = slice(0, 0)              # its kept points in the frame's arrays (set by FrameData)
         self.shift = None                     # (V, 3) or (3,) motion of the body from the frame's time to this
         self.shift_t = None                   # sensor's [m] (numpy, torch)
+        self.velocity = None                  # (V, 3) or (3,) [m/s] and each kept point's time from the
+        self.point_dt = None                  # Ouster's [s]: the motion to every point's own time
 
     @property
     def count(self) -> int:
@@ -572,9 +574,11 @@ class FrameData:
         self.point_view = np.concatenate([np.full(f.count, f.number, dtype=np.int64) for f in fitted])
         self.multi = len(views) > 1
         self.point_sigma = None
+        self.point_sigma_np = None
         if self.multi:
             sigma = np.concatenate([np.full(f.count, f.view.sigma) for f in fitted])
             self.point_sigma = torch.as_tensor(sigma, dtype=dtype, device=device)
+            self.point_sigma_np = sigma
         self.points = torch.as_tensor(self.points_np, dtype=dtype, device=device)
         held = [f.heldout_np for f in fitted] + [f.all_points_np for f in left_out]
         held_view = ([np.full(len(f.heldout_np), f.number, dtype=np.int64) for f in fitted]
@@ -610,6 +614,10 @@ class FrameData:
         for f in self.views[1:] + self.left_out:
             f.shift = velocity * (f.reference_time() - reference)
             f.shift_t = torch.as_tensor(f.shift, dtype=self.dtype, device=self.device)
+            # the points of one view are not all of one time either (the Helios 16P's two columns of
+            # lasers see one place 29 ms apart): each point moves by its own time
+            f.velocity = velocity
+            f.point_dt = np.asarray(f.point_times, dtype=np.float64) - reference
 
     def tree(self):
         """k-d tree of the person's points (built on first use)."""
@@ -953,7 +961,12 @@ class Tracker:
                 if vf.shift is not None:
                     if point_shift is None:
                         point_shift = np.zeros((n, 3))
-                    if np.ndim(vf.shift) == 1:
+                    per_point = vf.velocity is not None and vf.point_dt is not None and len(vf.point_dt) == vf.count
+                    if per_point:
+                        velocity = (vf.velocity[None, :] if np.ndim(vf.velocity) == 1 else
+                                    np.einsum("nk,nkd->nd", bary[vf.slice], vf.velocity[self.faces_np[face_ids[vf.slice]]]))
+                        point_shift[vf.slice] = velocity * vf.point_dt[:, None]
+                    elif np.ndim(vf.shift) == 1:
                         point_shift[vf.slice] = vf.shift
                     else:
                         corners = self.faces_np[face_ids[vf.slice]]
@@ -1279,11 +1292,11 @@ class Tracker:
         return self.explain(result[0], result[1], result[2], frame, self.extra_of(result))
 
     def explain(self, rotation, position, body, frame: FrameData, extra=None) -> dict:
-        """How well a pose explains a frame: the distance of every point to the visible body, the
-        fraction of points between recover_distance and max_correspondence ('unexplained': farther
-        points are clutter no limb can reach), and a score (lower is
-        better): the mean point distance, each capped at 0.15 m, plus 0.15 m times the fraction of
-        the visible vertices that lie where the sensor saw through."""
+        """How well a pose explains a frame: the distance of every point to the visible body (with several
+        sensors divided by its sensor's sigma), the fraction of points between recover_distance and
+        max_correspondence ('unexplained': farther points are clutter no limb can reach), and a score
+        (lower is better): the mean point distance, each capped at 0.15 m, plus 0.15 m times the fraction
+        of the visible vertices that lie where the sensor saw through."""
         import torch
         from bodyscan.body.model import vertex_normals
         with torch.no_grad():
@@ -1297,6 +1310,11 @@ class Tracker:
         match = self.match(vertices[0].cpu().numpy().astype(np.float64), normals[0].cpu().numpy().astype(np.float64),
                            frame)
         distance = match.distance
+        if getattr(frame, "point_sigma_np", None) is not None and len(frame.point_sigma_np) == len(distance):
+            # several sensors: every distance in units of the Ouster's noise (a depth camera's point 5 cm off
+            # is as explained as an Ouster point 1.4 cm off), so that a noisier sensor does not set off the
+            # searches of stage 1 by itself
+            distance = distance / frame.point_sigma_np
         c = self.config.tracking
         # points beyond max_correspondence are clutter (no limb can reach them): never a reason
         # to search the limbs again

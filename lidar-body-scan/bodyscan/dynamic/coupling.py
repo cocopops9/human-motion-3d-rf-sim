@@ -228,6 +228,9 @@ def _autocorrelation(x, w, lags):
     x = _detrend(x, w)
     out = np.zeros(len(lags))
     for k, lag in enumerate(lags):
+        if lag >= len(x):
+            out[k] = np.nan                     # a take shorter than the lag (smoke tests of a few frames)
+            continue
         a, b = x[:len(x) - lag], x[lag:]
         wa = w[:len(x) - lag] * w[lag:]
         if wa.sum() < 8:
