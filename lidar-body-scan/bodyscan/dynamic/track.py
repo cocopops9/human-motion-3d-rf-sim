@@ -148,6 +148,12 @@ class TrackConfig:
                                      "round down to robust_scale)",
                                 effect="larger: catches faster limbs, but stray points pull more in the first round")
     init_yaws: int = param(8, "facing directions tried on the first frame and after the person is lost")
+    init_full: int = param(0, "0: the start pose from quick fits of init_yaws facings, then whole fits of the "
+                              "init_facings best (the October behaviour); N > 0: whole fits from N evenly spaced "
+                              "facings (and from every facing a retry tries), the lowest score kept. On the A-pose "
+                              "starts of 3 Nov the quick fits found the facing the person had in neither precision "
+                              "reliably (front and back swapped between float32 and float64, 10 mm against 6 mm); "
+                              "8 whole fits found it in both (about 20 s once per take)")
     init_facings: int = param(4, "of the facings the init_yaws quick fits end in, the ones with the lowest "
                                  "energies (at most this many, more than 45 deg apart) are fitted as a whole "
                                  "and compared on the points",
@@ -1477,6 +1483,15 @@ class Tracker:
             away = center - self.sensor[:2]
             center = center + 0.12 * away / max(np.linalg.norm(away), 1e-6)
             position = np.array([center[0], center[1], self.avatar.standing_height])
+        if c.init_full > 0:
+            yaws = np.linspace(0.0, 2 * np.pi, c.init_full, endpoint=False) if yaws is None else yaws
+            best, best_score = None, np.inf
+            for yaw in yaws:
+                fitted = self.fit_frame(frame, rotation_z_np(yaw), position, body, None, extra=extra)
+                score = self.explain_fit(fitted, frame)["score"]
+                if score < best_score:
+                    best, best_score = fitted, score
+            return best
         yaws = np.linspace(0.0, 2 * np.pi, max(c.init_yaws, 1), endpoint=False) if yaws is None else yaws
         quick = sorted((self.fit_frame(frame, rotation_z_np(yaw), position, body, None, rounds=2, iterations=10,
                                        free_body=False, extra=extra) for yaw in yaws), key=lambda result: result[3])
