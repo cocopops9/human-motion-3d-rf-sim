@@ -1,8 +1,8 @@
 """Viewer packs: everything the motion viewer shows of one tracked take, in two or three files.
 
     viewer_frames.npz        per frame: the pose, the joints and the metrics of the frame
-    viewer_points.npz        per point of every sensor: the world point, its sensor, its distance to the
-                             body, the body part and the face it was matched to
+    viewer_points.npz        per point of every sensor, in frame order (frame_offsets): the world point, its
+                             sensor, its distance to the body, the body part and the face it was matched to
     viewer_uncertainty.npz   optional: the uncertainty of every joint's position per frame
 
 The viewer (a small web server and a page, outside this package) reads only these files and the body
@@ -313,9 +313,12 @@ def write_viewer_pack(motion_path, segments, avatar_path, out, extra_sensors=Non
 
     points = {key: np.concatenate(value) for key, value in columns.items()}
     offsets = np.searchsorted(points["frame"], np.arange(frames + 1))      # the points are in frame order
-    np.savez_compressed(out / "viewer_points.npz", order=np.arange(len(points["frame"]), dtype=np.int32),
-                        frame_offsets=offsets.astype(np.int64), seen_by=np.packbits(in_sight, axis=2),
-                        sensor_names=np.array(names), part_names=np.array(skeleton.PART_NAMES), **points)
+    del points["frame"]                                                    # given by frame_offsets
+    for key in ("distance", "signed", "dt"):                               # millimetres and milliseconds suffice
+        points[key] = points[key].astype(np.float16)
+    np.savez_compressed(out / "viewer_points.npz", frame_offsets=offsets.astype(np.int64),
+                        seen_by=np.packbits(in_sight, axis=2), sensor_names=np.array(names),
+                        part_names=np.array(skeleton.PART_NAMES), **points)
 
     heldout_sensor = np.full((frames, sensors), np.nan)
     if "sensor_heldout_residual_median" in motion:
