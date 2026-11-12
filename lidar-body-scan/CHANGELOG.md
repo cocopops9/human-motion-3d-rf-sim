@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (feature/multisensor): weighting of the additional sensors, viewer packs (2026-11-12)
+
+Diagnosis of the three-sensor production of 3 Nov (job 16527): with several sensors the data term and the
+misfit measures were means over the points of all sensors, so the Xtion's points (up to 2800 per frame at
+1.5 m) diluted the Ouster's and hid misplaced limbs from the searches; the Xtion returned a fraction of the
+body with errors of 10 to 30 cm when the person stood closer than about 1.3 m (s02_walk01: an arm followed
+those points over the head and stayed there for 3 s); its noise grows with the range squared; the toes
+drifted upwards to the joint limit over long takes.
+
+- `reference_count` (default on): with several sensors the data term and the unexplained share and score of
+  a frame are sums over the points of all sensors divided by the Ouster's point count.
+- `extra_sensor_noise name:sigma:quadratic`: per point noise max(sigma, quadratic r^2) relative to the Ouster's.
+- `extra_sensor_range name:nearest:farthest`: frames of a sensor with the person outside this range are
+  dropped (the log reports how many).
+- `toe_weight`: prior pulling the toe joints to rest (default 0, off).
+- `viewer-pack`: a tracked take packed for the motion viewer (points of every sensor with their distances to
+  the body, per frame metrics, optional joint position uncertainty from the Gauss-Newton covariance).
+- Local windows (body21, three sensors): s02_jump01 225 to 261, Ouster points 5 to 25 cm from the body
+  2206 (before) and 1057 (all four changes; 871 with the Ouster alone), the arm no longer stays raised after
+  landing; s02_walk01 225 to 319, 5858 and 772 (668 without the Xtion), no arm over the head.
+
 ## Unreleased (branch feature/multisensor, on feature/full-pose-55): the tracker with several sensors
 
 Added (stage S4 of docs/multisensor-plan.md, first version; validated on one synthetic take, not yet on

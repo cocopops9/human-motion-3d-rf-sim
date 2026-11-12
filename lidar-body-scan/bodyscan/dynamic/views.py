@@ -111,6 +111,11 @@ class SensorView:
     empty scene and how much its points and its free space count.
 
     sigma: range noise relative to the Ouster's (its points' residuals are divided by it);
+    sigma_quadratic: growth of that noise with the range r of a point from the sensor [1/m^2]: the noise
+    of a point is max(sigma, sigma_quadratic r^2) (a structured-light depth camera; 0: constant);
+    person_range: (nearest, farthest) distance of the person from the sensor [m] at which its frames
+    are used; a frame whose points lie nearer or farther (median range) is dropped, neither fitted nor
+    held out (None: every frame is used);
     weight: weight of its free-space and in-front terms relative to the Ouster's;
     foreground_margin: how much closer than the empty scene a surface must be to be segmented [m];
     row_tolerance: a vertex is tested for free space only within this many rows of a beam (sparse
@@ -124,14 +129,45 @@ class SensorView:
     row_tolerance: float = 0.5
     fitted: bool = True
     row_supersample: int | None = None
+    sigma_quadratic: float = 0.0
+    person_range: tuple | None = None
 
     @property
     def position(self) -> np.ndarray:
         return np.asarray(self.geometry.translation, dtype=np.float64).copy()
 
+    def point_sigma(self, points: np.ndarray) -> np.ndarray:
+        """(N,) noise of world points (N, 3) of this sensor relative to the Ouster's."""
+        if self.sigma_quadratic <= 0:
+            return np.full(len(points), self.sigma)
+        distance = np.linalg.norm(np.asarray(points, dtype=np.float64) - self.position, axis=1)
+        return np.maximum(self.sigma, self.sigma_quadratic * distance * distance)
+
+    def in_range(self, ranges: np.ndarray) -> bool:
+        """Whether a frame with these point ranges [m] lies inside person_range (True without points)."""
+        if self.person_range is None or len(ranges) == 0:
+            return True
+        return bool(self.person_range[0] <= float(np.median(ranges)) <= self.person_range[1])
+
     @property
     def wraps(self) -> bool:
         return bool(getattr(self.geometry, "wraps", True))
+
+
+def parse_sensor_options(text: str, count: int, what: str) -> dict:
+    """{sensor name: tuple of 'count' numbers} from 'name:a:b,name:a:b' (an option of the tracker)."""
+    out = {}
+    for item in (part.strip() for part in text.split(",")):
+        if not item:
+            continue
+        fields = item.split(":")
+        if len(fields) != count + 1:
+            raise SystemExit(f"{what}: '{item}' must be name" + ":number" * count)
+        try:
+            out[fields[0].strip()] = tuple(float(v) for v in fields[1:])
+        except ValueError:
+            raise SystemExit(f"{what}: '{item}' must be name" + ":number" * count) from None
+    return out
 
 
 def geometry_from_scene(kind: str, scene) -> object:
@@ -149,7 +185,9 @@ def geometry_from_scene(kind: str, scene) -> object:
 class ExtraSensors:
     """The additional sensors of a take (folder written by the session tools), see the module text."""
 
-    def __init__(self, folder, exclude=(), weight: float = 1.0):
+    def __init__(self, folder, exclude=(), weight: float = 1.0, noise: str = "", ranges: str = ""):
+        """noise: 'name:sigma:sigma_quadratic,...' and ranges: 'name:nearest:farthest,...' replace the
+        values of views.json for the named sensors (SensorView.sigma, sigma_quadratic, person_range)."""
         from bodyscan.dynamic.segment import PersonFrame
         self._person = PersonFrame
         self.folder = Path(folder)
@@ -158,8 +196,16 @@ class ExtraSensors:
             raise SystemExit(f"{self.folder} has no views.json: not a folder of additional sensors")
         self.meta = json.loads(meta_path.read_text())
         excluded = {name.strip() for name in exclude if name.strip()}
+        noise_of = parse_sensor_options(noise, 2, "extra_sensor_noise")
+        range_of = parse_sensor_options(ranges, 2, "extra_sensor_range")
+        names = {entry["name"] for entry in self.meta["sensors"]}
+        for option, given in (("extra_sensor_noise", noise_of), ("extra_sensor_range", range_of)):
+            if set(given) - names:
+                raise SystemExit(f"{option} names no additional sensor of {self.folder}: {sorted(set(given) - names)}")
         self.views: list[SensorView] = []
         self.paths: list[dict] = []
+        self.dropped = {}                      # sensor name: frames left out because the person was out of range
+        self._out_of_range = {}                # sensor name: the Ouster frame indices of those frames
         for entry in self.meta["sensors"]:
             name = entry["name"]
             scene = np.load(self.folder / name / "scene.npz")
@@ -171,7 +217,15 @@ class ExtraSensors:
                               row_tolerance=float(entry.get("row_tolerance", 0.5)),
                               fitted=name not in excluded,
                               row_supersample=(int(entry["row_supersample"]) if entry.get("row_supersample")
-                                               else None))
+                                               else None),
+                              sigma_quadratic=float(entry.get("sigma_quadratic", 0.0)),
+                              person_range=(tuple(float(v) for v in entry["person_range"])
+                                            if entry.get("person_range") else None))
+            if name in noise_of:
+                view.sigma, view.sigma_quadratic = noise_of[name]
+            if name in range_of:
+                view.person_range = range_of[name]
+            self.dropped[name] = 0
             self.views.append(view)
             frames = {}
             for path in sorted((self.folder / name / "frames").glob("person_*.npz")):
@@ -186,12 +240,24 @@ class ExtraSensors:
         out = []
         for number, frames in enumerate(self.paths):
             path = frames.get(int(index))
-            if path is not None:
-                out.append((number, self._person.load(path)))
+            if path is None:
+                continue
+            person = self._person.load(path)
+            view = self.views[number]
+            if view.person_range is not None:
+                ranges = np.linalg.norm(person.points - view.position, axis=1) if len(person.points) else np.zeros(0)
+                if not view.in_range(ranges):
+                    self._out_of_range.setdefault(view.name, set()).add(int(index))
+                    self.dropped[view.name] = len(self._out_of_range[view.name])
+                    continue
+            out.append((number, person))
         return out
 
     def summary(self) -> dict:
         return {"folder": str(self.folder),
-                "sensors": [{"name": v.name, "sigma": v.sigma, "weight": v.weight, "fitted": v.fitted,
+                "sensors": [{"name": v.name, "sigma": v.sigma, "sigma_quadratic": v.sigma_quadratic,
+                             "person_range": list(v.person_range) if v.person_range else None,
+                             "frames_out_of_range": self.dropped.get(v.name, 0),
+                             "weight": v.weight, "fitted": v.fitted,
                              "frames": len(p)} for v, p in zip(self.views, self.paths)],
                 "calibration": self.meta.get("calibration"), "time_offsets": self.meta.get("time_offsets")}

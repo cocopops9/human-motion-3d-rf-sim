@@ -269,6 +269,28 @@ class TrackConfig:
                                      "their points are reported as held out (held-out-sensor validation)")
     extra_sensor_weight: float = param(1.0, "weight of the free-space and in-front terms of every additional sensor, "
                                             "relative to the Ouster's (times the sensor's own weight in views.json)")
+    extra_sensor_noise: str = param("", "noise of additional sensors relative to the Ouster's, replacing views.json: "
+                                        "'name:sigma:quadratic,...'; a point at range r from its sensor counts with "
+                                        "max(sigma, quadratic r^2). The Xtion of 3 Nov: residuals 2.0 times the "
+                                        "Ouster's up to 2.8 m, then growing as 0.26 r^2 (2.7 at 3.25 m, 4.2 at 4 m)")
+    extra_sensor_range: str = param("", "distance of the person at which an additional sensor's frames are used, "
+                                        "replacing views.json: 'name:nearest:farthest,...' [m]; frames outside are "
+                                        "dropped. The Xtion of 3 Nov returned a fraction of the body with errors of "
+                                        "10 to 30 cm when the person stood closer than about 1.3 m (take s02_walk01, "
+                                        "frames 240 to 252: an arm followed them over the head and stayed for 3 s)")
+    reference_count: bool = param(True, "with several sensors, the data term and the misfit measures of a frame "
+                                        "(unexplained share, score of the searches) are sums over the points of all "
+                                        "sensors divided by the number of points of the Ouster, so that another "
+                                        "sensor adds evidence",
+                                  effect="false (the first three-sensor runs): means over the points of all sensors, "
+                                         "so every additional point makes the Ouster's count less against the priors "
+                                         "and makes a misplaced limb weigh less in the searches (s02_jump01 frames "
+                                         "225 to 261: 2206 Ouster points left unexplained with three sensors, 871 "
+                                         "with the Ouster alone)")
+    toe_weight: float = param(0.0, "weight pulling the toe joints towards rest [per rad^2]; few points fall on "
+                                   "the toes, and a shoe is thicker there than the avatar's foot",
+                              effect="0: the toes bend upwards to the joint limit (median 37 to 45 deg in the s02 "
+                                     "takes of 3 Nov, at the limit of 60 deg in up to 30 % of the frames)")
     hand_starts: int = param(0, "full55, stage 1: a hand with at least hand_search_points points within hand_radius "
                                 "of its middle knuckle is fitted again (body fixed) from its fitted coefficients and "
                                 "from this many starts of its first PCA coefficient, from 0 (the mean hand) to minus "
@@ -363,6 +385,8 @@ WRIST_JOINTS = [skeleton.JOINT[name] - 1 for name in ("left_wrist", "right_wrist
 # The trunk, neck and head joints reset by the trunk search (twist and side bend only; the
 # forward bend stays), and the limbs of the searches (indices into the 21 body joints).
 TRUNK_JOINTS = [skeleton.JOINT[name] - 1 for name in ("spine1", "spine2", "spine3")]
+# toes: the joints named left_foot and right_foot in SMPL-X, pulled towards rest by toe_weight.
+TOE_JOINTS = [skeleton.JOINT[name] - 1 for name in ("left_foot", "right_foot")]
 LIMB_JOINT_NAMES = {
     "legs": [f"{side}_{name}" for side in ("left", "right") for name in ("hip", "knee", "ankle")],
     "left_arm": [f"left_{name}" for name in ("collar", "shoulder", "elbow", "wrist")],
@@ -395,6 +419,8 @@ def neutral_priors(body, config) -> object:
     if config.forearm_twist_weight > 0:
         energy = energy + config.forearm_twist_weight * ((body[..., ELBOW_JOINTS, 0] ** 2).sum()
                                                           + (body[..., WRIST_JOINTS, :] ** 2).sum())
+    if getattr(config, "toe_weight", 0.0) > 0:
+        energy = energy + config.toe_weight * (body[..., TOE_JOINTS, :] ** 2).sum()
     return energy
 
 
@@ -581,8 +607,9 @@ class FrameData:
         self.multi = len(views) > 1
         self.point_sigma = None
         self.point_sigma_np = None
+        self.reference_points = fitted[0].count if fitted and fitted[0].number == 0 else 0
         if self.multi:
-            sigma = np.concatenate([np.full(f.count, f.view.sigma) for f in fitted])
+            sigma = np.concatenate([f.view.point_sigma(f.points_np) for f in fitted])
             self.point_sigma = torch.as_tensor(sigma, dtype=dtype, device=device)
             self.point_sigma_np = sigma
         self.points = torch.as_tensor(self.points_np, dtype=dtype, device=device)
@@ -810,7 +837,8 @@ class Tracker:
         self.extra = None
         if c.extra_sensors:
             self.extra = ExtraSensors(c.extra_sensors, exclude=c.exclude_sensors.split(","),
-                                      weight=c.extra_sensor_weight)
+                                      weight=c.extra_sensor_weight, noise=c.extra_sensor_noise,
+                                      ranges=c.extra_sensor_range)
             self.views += self.extra.views
         self.view_tables = [self.tables] + [v.geometry.torch_tables(self.device, self.dtype) for v in self.views[1:]]
         # several sensors: the share of the visible body in free space is measured by surface area (a third of
@@ -1044,8 +1072,9 @@ class Tracker:
                                    + c.point_to_point * geman_mcclure(diff.norm(dim=-1), data_scale).mean()) / s2
             else:
                 sigma = frame.point_sigma[match.point_index]
-                energy = energy + (geman_mcclure(plane / sigma, data_scale).mean()
-                                   + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale).mean()) / s2
+                losses = (geman_mcclure(plane / sigma, data_scale)
+                          + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale))
+                energy = energy + losses.sum() / (self.data_count(frame, match) * s2)
         if shifted_views is None and (shifted_silhouette is not None or shifted_front is not None):
             shifted_views = [(shifted_silhouette, shifted_front)]
         for number, view_match in enumerate(match.views):
@@ -1054,6 +1083,16 @@ class Tracker:
         feet_z = vertices[self.feet, 2]
         energy = energy + c.floor_weight * (torch.relu(-feet_z) ** 2).mean() / s2
         return energy
+
+    def data_count(self, frame: FrameData, match: FrameMatch) -> int:
+        """What the sum of the point losses of a frame of several sensors is divided by: the number of
+        matched points of the Ouster (reference_count; of all sensors when the Ouster has none, or without
+        reference_count: the mean over every sensor's points of the first three-sensor runs)."""
+        matched = len(match.point_index)
+        if not self.config.tracking.reference_count or frame.reference_points == 0:
+            return max(matched, 1)
+        ouster = int((match.point_index < frame.reference_points).sum())
+        return ouster if ouster > 0 else max(matched, 1)
 
     def add_sight_energy(self, energy, vertices, view_match: ViewMatch, shifted_silhouette=None, shifted_front=None):
         """'energy' plus the silhouette (free-space) and front terms of one sensor: vertices (V, 3) torch;
@@ -1327,8 +1366,15 @@ class Tracker:
         far = (distance > c.recover_distance) & (distance < c.max_correspondence)
         free = match.silhouette.cpu().numpy() if len(match.silhouette) else np.zeros(0, dtype=np.int64)
         free_share = self.free_share(match)
-        return {"distance": distance, "unexplained": float(np.mean(far)), "unexplained_count": int(far.sum()),
-                "score": float(np.mean(np.minimum(distance, 0.15)) + 0.15 * free_share),
+        # several sensors with reference_count: per point of the Ouster, so that the points of another sensor
+        # add to the evidence of a misplaced limb instead of making the Ouster's count less
+        multi = getattr(frame, "point_sigma_np", None) is not None
+        count = len(distance)
+        if multi and c.reference_count and getattr(frame, "reference_points", 0) > 0:
+            count = frame.reference_points
+        count = max(count, 1)
+        return {"distance": distance, "unexplained": float(far.sum() / count), "unexplained_count": int(far.sum()),
+                "score": float(np.minimum(distance, 0.15).sum() / count + 0.15 * free_share),
                 "visible": match.visible, "far": far, "free": free_share,
                 "free_vertices": free,
                 "observed_parts": self.observed_parts(vertices[0].cpu().numpy().astype(np.float64), match.visible,
@@ -2864,9 +2910,20 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
              f"(seed {config.tracking.holdout_seed})")
     if tracker.extra is not None:
         for entry in tracker.extra.summary()["sensors"]:
-            info(f"  additional sensor {entry['name']}: {entry['frames']} frames, noise x{entry['sigma']:g} the "
-                 f"Ouster's, free-space weight {entry['weight']:g}" + ("" if entry["fitted"] else ", held out"))
+            noise = f"noise x{entry['sigma']:g} the Ouster's"
+            if entry["sigma_quadratic"] > 0:
+                noise += f" (x{entry['sigma_quadratic']:g} r^2 where larger)"
+            used = (f", used with the person at {entry['person_range'][0]:g} to {entry['person_range'][1]:g} m"
+                    if entry["person_range"] else "")
+            info(f"  additional sensor {entry['name']}: {entry['frames']} frames, {noise}, free-space weight "
+                 f"{entry['weight']:g}{used}" + ("" if entry["fitted"] else ", held out"))
+        if not config.tracking.reference_count:
+            info("  data term and misfit measures: means over the points of all sensors (reference_count off)")
     result = tracker.track(start, stop, warm)
+    if tracker.extra is not None:
+        for name, count in tracker.extra.dropped.items():
+            if count:
+                info(f"  {name}: {count} frames dropped, the person out of its range")
     prepared = None
     if config.refine.enabled and len(result["times"]) >= 3:
         prepared = tracker.plan_coupling(result)

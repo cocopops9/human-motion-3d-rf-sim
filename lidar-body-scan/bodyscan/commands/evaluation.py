@@ -1,5 +1,6 @@
 """Commands: evaluate-take (fit quality of a tracked take, with body heatmaps), bench-rig
-(coverage of the body by candidate sensor layouts) and view (the interactive viewer)."""
+(coverage of the body by candidate sensor layouts), viewer-pack (a tracked take packed for the motion
+viewer) and view (the first interactive viewer, single sensor)."""
 
 from __future__ import annotations
 
@@ -94,6 +95,41 @@ class BenchRig(ConfiguredCommand):
         from bodyscan.evaluation.coverage import bench_rig
         bench_rig(args.layouts, args.motions, Path(args.out), args.model, args.avatar, config.coverage,
                   args.zone_distance)
+        return 0
+
+
+class ViewerPack(Command):
+    """Pack a tracked take for the motion viewer (points of every sensor, metrics, heatmap data).
+
+        python -m bodyscan viewer-pack results\\s02_walk01\\motion.npz --segments s02_walk01_seg
+            --extra-sensors s02_walk01_extra --avatar s02_avatar.npz --model SMPLX_MALE.npz
+            --hand-pca SMPLX_MALE_v11.npz --out viewer_packs\\run_name\\s02_walk01 --uncertainty-step 2
+
+    Writes viewer_frames.npz, viewer_points.npz and, with --uncertainty-step, viewer_uncertainty.npz.
+    The viewer shows every folder <results root>/<run>/<take> that holds these files. Every sensor of
+    the take is packed: the points of a sensor the run did not fit are an independent check of the
+    pose. Needs PyTorch."""
+    name = "viewer-pack"
+    help = "pack a tracked take for the motion viewer (points per sensor, metrics, uncertainty)"
+
+    def add_arguments(self, parser):
+        parser.add_argument("motion", help="motion .npz (bodyscan track)")
+        parser.add_argument("--segments", required=True, help="segment-motion folder of the take")
+        parser.add_argument("--extra-sensors", default=None, help="folder of the take's additional sensors")
+        parser.add_argument("--avatar", required=True, help="avatar .npz used for the tracking")
+        parser.add_argument("--model", default=None, help="model file, if it moved since the avatar was fitted")
+        parser.add_argument("--hand-pca", default=None, help="hand PCA file of a full55 motion, if it moved")
+        parser.add_argument("--out", required=True, help="output folder: <results root>/<run>/<take>")
+        parser.add_argument("--uncertainty-step", type=int, default=0,
+                            help="joint position uncertainty every this many frames (0: not computed; "
+                                 "about 1.5 s per frame on one core)")
+
+    def run(self, args):
+        from bodyscan.evaluation.pack import PackOptions, write_viewer_pack
+        done = write_viewer_pack(args.motion, args.segments, args.avatar, args.out, args.extra_sensors, args.model,
+                                 args.hand_pca, PackOptions(uncertainty_step=args.uncertainty_step))
+        info(f"packed {done['frames']} frames and {done['points']} points of {', '.join(done['sensors'])} "
+             f"in {done['seconds']:.0f} s: {done['out']}")
         return 0
 
 
