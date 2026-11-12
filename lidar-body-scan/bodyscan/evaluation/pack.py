@@ -363,5 +363,5 @@ def write_viewer_pack(motion_path, segments, avatar_path, out, extra_sensors=Non
             np.savez_compressed(out / "viewer_uncertainty.npz", joint_std=joint_std[nearest],
                                 params_std=parameter_std[nearest], computed_frames=computed, sigma0=OUSTER_NOISE,
                                 prior_angle=PRIOR_ANGLE, prior_position=PRIOR_POSITION)
-    return {"frames": frames, "points": int(len(points["frame"])), "sensors": names,
+    return {"frames": frames, "points": int(offsets[-1]), "sensors": names,
             "seconds": round(time.time() - started, 1), "out": str(out)}
