@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (feature/multisensor): weighting of the additional sensors, viewer packs (2026-11-12)
+## Unreleased (feature/multisensor): weighting of the additional sensors, viewer packs (2026-11-12, audited 2026-11-13)
 
 Diagnosis of the three-sensor production of 3 Nov (job 16527): with several sensors the data term and the
 misfit measures were means over the points of all sensors, so the Xtion's points (up to 2800 per frame at
@@ -17,9 +17,29 @@ drifted upwards to the joint limit over long takes.
 - `toe_weight`: prior pulling the toe joints to rest (default 0, off).
 - `viewer-pack`: a tracked take packed for the motion viewer (points of every sensor with their distances to
   the body, per frame metrics, optional joint position uncertainty from the Gauss-Newton covariance).
-- Local windows (body21, three sensors): s02_jump01 225 to 261, Ouster points 5 to 25 cm from the body
-  2206 (before) and 1057 (all four changes; 871 with the Ouster alone), the arm no longer stays raised after
-  landing; s02_walk01 225 to 319, 5858 and 772 (668 without the Xtion), no arm over the head.
+- Local windows (body21), audited on 13 Nov with repeated runs. Two runs of the same configuration that
+  differ only in rounding (robust scale changed by 3e-8 of its value) put an arm joint more than 10 cm apart
+  in 25 of 37 frames of s02_jump01 225 to 261 with the old weighting, in 11 with the reference count and in
+  13 with all changes: single runs of a short window cannot rank configurations that are close.
+  - Reference count (supported): Ouster points 5 to 25 cm from the body in that window, 2206 and 1794 with
+    the old weighting (two runs), 865, 851 and 806 with the reference count, 871, 941 and 951 with the Ouster
+    alone. s02_walk01 225 to 319: the arm that followed the Xtion's close-range points over the head for 3 s
+    (production) leaves the Ouster-only track for 1 s with the reference count alone (20 frames).
+  - Range limit of the Xtion (supported on that episode): with the frames closer than 1.3 m dropped the arm
+    never leaves the Ouster-only track (0 frames; 772 Ouster points off against 1985 without the limit).
+  - Xtion noise by range, far limits, toe prior: no effect on the Ouster's fit that exceeds the difference
+    between repeated runs (1057 and 737 with all changes). The toe prior holds the toes within 2.4 deg of
+    rest (they swing between -36 and +30 deg without it).
+
+Corrections of 13 Nov (audit of the changes above):
+
+- Without `reference_count`, and when every matched point is the Ouster's, the data term and the misfit
+  measures are written as before the change (means), so those runs are reproduced to the last bit
+  (`Tracker.data_count` returns None for the mean). Checked against commit 61a4c40 on s02_jump01.
+- `viewer-pack`: the joint uncertainty is computed from the points the run fitted (its sensors, in the frames
+  it used them); it used the points of every sensor, also for a run that left sensors out.
+- Tests: the range limits and their count in `ExtraSensors`, the Ouster's point count and the noise by range
+  in `FrameData`, the cases in which the mean applies.
 
 ## Unreleased (branch feature/multisensor, on feature/full-pose-55): the tracker with several sensors
 

@@ -73,24 +73,32 @@ class ToePriorTest(unittest.TestCase):
 
 
 class DataCountTest(unittest.TestCase):
+    def tracker(self, reference_count: bool):
+        return SimpleNamespace(config=SimpleNamespace(tracking=SimpleNamespace(reference_count=reference_count)))
+
+    @unittest.skipUnless(HAS_TORCH, "needs PyTorch")
     def test_the_data_term_is_divided_by_the_ouster_points(self):
         from bodyscan.dynamic.track import Tracker
         import torch
-        tracker = SimpleNamespace(config=SimpleNamespace(tracking=SimpleNamespace(reference_count=True)))
         frame = SimpleNamespace(reference_points=100)
         # 60 matched Ouster points (indices < 100) and 40 of another sensor
         match = SimpleNamespace(point_index=torch.cat([torch.arange(60), torch.arange(100, 140)]))
-        self.assertEqual(Tracker.data_count(tracker, frame, match), 60)
-        tracker.config.tracking.reference_count = False
-        self.assertEqual(Tracker.data_count(tracker, frame, match), 100)
+        self.assertEqual(Tracker.data_count(self.tracker(True), frame, match), 60)
 
-    def test_without_ouster_points_all_points_count(self):
+    @unittest.skipUnless(HAS_TORCH, "needs PyTorch")
+    def test_the_mean_over_the_points_applies_in_every_other_case(self):
+        """None stands for the mean over the matched points, written as before the reference count."""
         from bodyscan.dynamic.track import Tracker
         import torch
-        tracker = SimpleNamespace(config=SimpleNamespace(tracking=SimpleNamespace(reference_count=True)))
-        frame = SimpleNamespace(reference_points=0)
-        match = SimpleNamespace(point_index=torch.arange(100, 130))
-        self.assertEqual(Tracker.data_count(tracker, frame, match), 30)
+        frame = SimpleNamespace(reference_points=100)
+        mixed = SimpleNamespace(point_index=torch.cat([torch.arange(60), torch.arange(100, 140)]))
+        self.assertIsNone(Tracker.data_count(self.tracker(False), frame, mixed))           # reference_count off
+        only_ouster = SimpleNamespace(point_index=torch.arange(60))
+        self.assertIsNone(Tracker.data_count(self.tracker(True), frame, only_ouster))      # the Ouster alone
+        only_other = SimpleNamespace(point_index=torch.arange(100, 130))
+        self.assertIsNone(Tracker.data_count(self.tracker(True), frame, only_other))       # no Ouster point matched
+        no_ouster = SimpleNamespace(reference_points=0)
+        self.assertIsNone(Tracker.data_count(self.tracker(True), no_ouster, only_other))   # the Ouster saw nothing
 
 
 if __name__ == "__main__":

@@ -3,7 +3,8 @@
     viewer_frames.npz        per frame: the pose, the joints and the metrics of the frame
     viewer_points.npz        per point of every sensor, in frame order (frame_offsets): the world point, its
                              sensor, its distance to the body, the body part and the face it was matched to
-    viewer_uncertainty.npz   optional: the uncertainty of every joint's position per frame
+    viewer_uncertainty.npz   optional: the uncertainty of every joint's position per frame, from the points
+                             the run fitted (its sensors, in the frames it used them)
 
 The viewer (a small web server and a page, outside this package) reads only these files and the body
 model, so a take tracked on a cluster is packed there and looked at on a laptop.
@@ -143,20 +144,25 @@ def point_table(tracker, frame, match, vertices: np.ndarray) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ uncertainty
-def joint_uncertainty(tracker, motion: dict, k: int, frame, match, normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def joint_uncertainty(tracker, motion: dict, k: int, frame, match, normals: np.ndarray,
+                      used: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Standard deviation of every joint's position [m] (55,) and of the 69 pose parameters (root rotation,
     root position, 21 body joints) that follows from the noise of the frame's points: the Gauss-Newton
     covariance of the point-to-plane residuals (each point with its sensor's noise, robust weights at the
-    fitted pose) with a weak prior. A lower bound: wrong matches and model errors are not in it."""
+    fitted pose) with a weak prior. A lower bound: wrong matches and model errors are not in it.
+    used: (points of the frame,) which points the run fitted (None: all); the points of a sensor the run
+    left out, or of a frame it dropped, say nothing of how well that run's pose was determined."""
     import torch
     valid = match.point_index.numpy()
-    if len(valid) < 10:
+    chosen = np.ones(len(valid), dtype=bool) if used is None else np.asarray(used, dtype=bool)[valid]
+    if int(chosen.sum()) < 10:
         return np.full(55, np.nan), np.full(69, np.nan)
-    corners_np = tracker.faces_np[match.face_ids.numpy()]
+    valid = valid[chosen]
+    corners_np = tracker.faces_np[match.face_ids.numpy()[chosen]]
     corners = torch.as_tensor(corners_np)
-    weights = match.bary.to(torch.float64)
+    weights = match.bary.to(torch.float64)[torch.as_tensor(chosen)]
     points = torch.as_tensor(frame.points_np[valid], dtype=torch.float64)
-    shift = None if match.point_shift is None else match.point_shift.to(torch.float64)
+    shift = None if match.point_shift is None else match.point_shift.to(torch.float64)[torch.as_tensor(chosen)]
     normal = torch.as_tensor(normals[corners_np].mean(axis=1))
     normal = normal / normal.norm(dim=1, keepdim=True).clamp_min(1e-9)
     sigma = torch.ones(len(valid), dtype=torch.float64)
@@ -308,7 +314,10 @@ def write_viewer_pack(motion_path, segments, avatar_path, out, extra_sensors=Non
                     if np.isfinite(signed[chosen]).any():
                         part_signed[k, s, p] = np.nanmedian(signed[chosen])
             if options.uncertainty_step > 0 and k % options.uncertainty_step == 0:
-                joint_std[k], parameter_std[k] = joint_uncertainty(tracker, motion, int(k), frame, match, normals[i])
+                # from the points the run fitted: its sensors, in the frames it used them
+                used = (fitted & sensor_used[k])[table["sensor"]]
+                joint_std[k], parameter_std[k] = joint_uncertainty(tracker, motion, int(k), frame, match, normals[i],
+                                                                   used)
         info(f"  packed frames: {span[-1] + 1}/{frames}  elapsed {time.time() - started:5.0f} s")
 
     points = {key: np.concatenate(value) for key, value in columns.items()}

@@ -115,6 +115,33 @@ class ExtraSegmentTest(unittest.TestCase):
         self.assertGreater((person.crop_mask == 1).sum(), 0.85 * masks[2].sum())
         self.assertAlmostEqual(float(np.median(person.point_times)), 10.0 + 2 / 30.0, places=9)
 
+    def test_frames_with_the_person_out_of_range_are_dropped_and_counted(self):
+        from bodyscan.dynamic.extra_segment import ExtraSegmentationConfig, ExtraSegmenter, SensorImages
+        from bodyscan.dynamic.views import ExtraSensors, PinholeGeometry
+        T = look_at(np.array([0.0, 0.0, 1.0]), [3.0, 0.0, 0.9])
+        g = PinholeGeometry(160, 120, 143.9, 143.9, 79.5, 59.5, T)
+        empty, _ = cylinder_scene(g, (30.0, 30.0))
+        frames, times = [], []
+        for k in range(3):
+            r, _ = cylinder_scene(g, (3.0, 0.0))                               # the person 2.8 m from the camera
+            frames.append(r)
+            times.append(np.full(r.shape, 10.0 + k / 30.0))
+        images = SensorImages("pinhole", g, empty, frames, times, [10.0 + k / 30.0 for k in range(3)], 1 / 30.0)
+        track = [{"index": k, "time": 10.0 + k / 30.0, "center": [3.0, 0.0]} for k in range(3)]
+        ExtraSegmenter(images, ExtraSegmentationConfig(min_points=20)).run(track, self.folder.path, "cam", 1.5)
+        inside = ExtraSensors(self.folder.path, noise="cam:2.0:0.26", ranges="cam:1.3:4.2")
+        self.assertEqual((inside.views[0].sigma, inside.views[0].sigma_quadratic), (2.0, 0.26))
+        self.assertEqual(len(inside.frames_for(1)), 1)
+        self.assertEqual(inside.dropped["cam"], 0)
+        outside = ExtraSensors(self.folder.path, ranges="cam:1.3:2.5")
+        self.assertEqual(outside.frames_for(1), [])
+        self.assertEqual(outside.frames_for(1), [])                             # asked twice, counted once
+        self.assertEqual(outside.frames_for(2), [])
+        self.assertEqual(outside.dropped["cam"], 2)
+        self.assertEqual(outside.summary()["sensors"][0]["frames_out_of_range"], 2)
+        with self.assertRaises(SystemExit):
+            ExtraSensors(self.folder.path, ranges="xtion:1.3:4.2")              # no sensor of that name
+
     @unittest.skipUnless(HAS_TORCH, "needs PyTorch")
     def test_frame_data_puts_every_sensor_after_the_ouster_and_keeps_its_hold_out(self):
         import torch
@@ -139,6 +166,13 @@ class ExtraSegmentTest(unittest.TestCase):
         self.assertEqual(len(both.points_np), len(alone.points_np) + both.views[1].count)
         self.assertTrue(np.all(both.point_view[len(alone.points_np):] == 1))
         self.assertTrue(np.allclose(both.point_sigma.numpy()[len(alone.points_np):], 2.0))
+        self.assertEqual(both.reference_points, len(alone.points_np))          # the Ouster's kept points
+        views[1].sigma_quadratic = 4.0                                          # noise growing with the range
+        ranged = FrameData(ouster, g, "cpu", torch.float64, holdout=0.2, seed=3, views=views, extra=[(1, cam)])
+        r = np.linalg.norm(ranged.points_np[len(alone.points_np):] - views[1].position, axis=1)
+        self.assertTrue(np.allclose(ranged.point_sigma.numpy()[len(alone.points_np):], np.maximum(2.0, 4.0 * r * r)))
+        self.assertTrue(np.allclose(ranged.point_sigma.numpy()[:len(alone.points_np)], 1.0))
+        views[1].sigma_quadratic = 0.0
         views[1].fitted = False                                                 # held-out sensor
         held = FrameData(ouster, g, "cpu", torch.float64, holdout=0.2, seed=3, views=views, extra=[(1, cam)])
         self.assertEqual(len(held.points_np), len(alone.points_np))

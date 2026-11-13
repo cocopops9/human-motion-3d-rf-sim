@@ -285,12 +285,14 @@ class TrackConfig:
                                   effect="false (the first three-sensor runs): means over the points of all sensors, "
                                          "so every additional point makes the Ouster's count less against the priors "
                                          "and makes a misplaced limb weigh less in the searches (s02_jump01 frames "
-                                         "225 to 261: 2206 Ouster points left unexplained with three sensors, 871 "
-                                         "with the Ouster alone)")
+                                         "225 to 261: 2206 and 1794 Ouster points left unexplained in two runs with "
+                                         "three sensors, 865 and 851 with the reference count, 871 and 941 with the "
+                                         "Ouster alone)")
     toe_weight: float = param(0.0, "weight pulling the toe joints towards rest [per rad^2]; few points fall on "
                                    "the toes, and a shoe is thicker there than the avatar's foot",
-                              effect="0: the toes bend upwards to the joint limit (median 37 to 45 deg in the s02 "
-                                     "takes of 3 Nov, at the limit of 60 deg in up to 30 % of the frames)")
+                              effect="0: the toes drift upwards (take medians of 15 to 41 deg in the s02 takes of "
+                                     "3 Nov, at the limit of 60 deg in up to 22 % of the frames). 0.3 holds them "
+                                     "within about 2 deg of rest, also where a real foot bends them")
     hand_starts: int = param(0, "full55, stage 1: a hand with at least hand_search_points points within hand_radius "
                                 "of its middle knuckle is fitted again (body fixed) from its fitted coefficients and "
                                 "from this many starts of its first PCA coefficient, from 0 (the mean hand) to minus "
@@ -1072,9 +1074,16 @@ class Tracker:
                                    + c.point_to_point * geman_mcclure(diff.norm(dim=-1), data_scale).mean()) / s2
             else:
                 sigma = frame.point_sigma[match.point_index]
-                losses = (geman_mcclure(plane / sigma, data_scale)
-                          + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale))
-                energy = energy + losses.sum() / (self.data_count(frame, match) * s2)
+                count = self.data_count(frame, match)
+                if count is None:
+                    # the mean over the points, written as before the reference count so that those runs
+                    # (and the Ouster alone) come out the same to the last bit
+                    energy = energy + (geman_mcclure(plane / sigma, data_scale).mean()
+                                       + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale).mean()) / s2
+                else:
+                    losses = (geman_mcclure(plane / sigma, data_scale)
+                              + c.point_to_point * geman_mcclure(diff.norm(dim=-1) / sigma, data_scale))
+                    energy = energy + losses.sum() / (count * s2)
         if shifted_views is None and (shifted_silhouette is not None or shifted_front is not None):
             shifted_views = [(shifted_silhouette, shifted_front)]
         for number, view_match in enumerate(match.views):
@@ -1084,15 +1093,17 @@ class Tracker:
         energy = energy + c.floor_weight * (torch.relu(-feet_z) ** 2).mean() / s2
         return energy
 
-    def data_count(self, frame: FrameData, match: FrameMatch) -> int:
+    def data_count(self, frame: FrameData, match: FrameMatch) -> int | None:
         """What the sum of the point losses of a frame of several sensors is divided by: the number of
-        matched points of the Ouster (reference_count; of all sensors when the Ouster has none, or without
-        reference_count: the mean over every sensor's points of the first three-sensor runs)."""
-        matched = len(match.point_index)
+        matched points of the Ouster (reference_count). None: the mean over the matched points applies,
+        which is the case without reference_count (the first three-sensor runs), when the Ouster has no
+        matched point, and when every matched point is the Ouster's."""
         if not self.config.tracking.reference_count or frame.reference_points == 0:
-            return max(matched, 1)
+            return None
         ouster = int((match.point_index < frame.reference_points).sum())
-        return ouster if ouster > 0 else max(matched, 1)
+        if ouster == 0 or ouster == len(match.point_index):
+            return None
+        return ouster
 
     def add_sight_energy(self, energy, vertices, view_match: ViewMatch, shifted_silhouette=None, shifted_front=None):
         """'energy' plus the silhouette (free-space) and front terms of one sensor: vertices (V, 3) torch;
@@ -1369,12 +1380,15 @@ class Tracker:
         # several sensors with reference_count: per point of the Ouster, so that the points of another sensor
         # add to the evidence of a misplaced limb instead of making the Ouster's count less
         multi = getattr(frame, "point_sigma_np", None) is not None
-        count = len(distance)
-        if multi and c.reference_count and getattr(frame, "reference_points", 0) > 0:
-            count = frame.reference_points
-        count = max(count, 1)
-        return {"distance": distance, "unexplained": float(far.sum() / count), "unexplained_count": int(far.sum()),
-                "score": float(np.minimum(distance, 0.15).sum() / count + 0.15 * free_share),
+        reference = getattr(frame, "reference_points", 0)
+        if multi and c.reference_count and 0 < reference < len(distance):
+            unexplained = float(far.sum() / reference)
+            misfit = float(np.minimum(distance, 0.15).sum() / reference)
+        else:
+            unexplained = float(np.mean(far))
+            misfit = float(np.mean(np.minimum(distance, 0.15)))
+        return {"distance": distance, "unexplained": unexplained, "unexplained_count": int(far.sum()),
+                "score": misfit + 0.15 * free_share,
                 "visible": match.visible, "far": far, "free": free_share,
                 "free_vertices": free,
                 "observed_parts": self.observed_parts(vertices[0].cpu().numpy().astype(np.float64), match.visible,
