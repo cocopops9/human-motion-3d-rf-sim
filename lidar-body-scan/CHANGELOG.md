@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased (feature/multisensor): selection among several runs of a take (2026-11-13)
+
+The fit of a frame has several local minima where an arm moves fast, and two runs of the same configuration
+that differ only in rounding settle differently (below). The measurements usually tell which is right.
+
+- `select-motion` (`bodyscan.dynamic.select`): several tracked motions of the same take are scored frame by
+  frame with the tracker's own score, and a path through them is chosen by dynamic programming (the sum of
+  the scores plus a cost for changing motion that grows with the distance between the two motions at that
+  frame); then each arm is chosen on its own. The chosen poses are written as a motion file for the warm
+  start of a last pass (`track --init-motion`), which fits every frame from them and refines the windows.
+  With `--holdout-fraction` the same points stay out of the scores as out of the fits.
+- Local windows, Ouster points 5 to 25 cm from the body after selection and last pass: s02_jump01 225 to
+  261, 442, 490 and 598 (selections among 5, 10 and 5 runs) against 496 to 1057 for the single runs (mean
+  832); two selections from disjoint halves of the runs put an arm more than 10 cm apart in 4 of 37 frames,
+  two single runs in 11 to 13. s02_walk01 225 to 319: 679 against 668 to 1985 for the single runs.
+- Tests: the path of least cost, the pose put together from several motions.
+
 ## Unreleased (feature/multisensor): weighting of the additional sensors, viewer packs (2026-11-12, audited 2026-11-13)
 
 Diagnosis of the three-sensor production of 3 Nov (job 16527): with several sensors the data term and the

@@ -388,6 +388,55 @@ class Track(ConfiguredCommand):
         return 0
 
 
+class SelectMotion(Command):
+    """Choose among several tracked motions of the same take, frame by frame, by how well each explains the
+    measurements; the chosen poses are the warm start of a last tracking pass.
+
+        python -m bodyscan select-motion run1\\motion.npz run2\\motion.npz run3\\motion.npz
+            --segments s02_jump01_seg --extra-sensors s02_jump01_extra --avatar s02_avatar.npz
+            --extra-sensor-range xtion:1.3:4.2 --out selected.npz
+        python -m bodyscan track s02_jump01_seg --avatar s02_avatar.npz --extra-sensors s02_jump01_extra
+            --init-motion selected.npz --out final
+
+    The fit of a frame has several local minima where a limb moves fast: runs that differ only in rounding,
+    or in the sensors they use, settle differently, and the measurements usually tell which is right. The
+    whole body is chosen first, then each arm on its own (bodyscan.dynamic.select). Needs PyTorch."""
+    name = "select-motion"
+    help = "choose among several tracked motions of a take by their fit to the measurements"
+
+    def add_arguments(self, parser):
+        parser.add_argument("motions", nargs="+", help="motion .npz files of the same take (bodyscan track)")
+        parser.add_argument("--segments", required=True, help="segment-motion folder of the take")
+        parser.add_argument("--extra-sensors", default=None, help="folder of the take's additional sensors")
+        parser.add_argument("--avatar", required=True, help="avatar .npz used for the tracking")
+        parser.add_argument("--model", default=None, help="model file, if it moved since the avatar was fitted")
+        parser.add_argument("--out", required=True, help="output motion .npz (a .json summary is written next to it)")
+        parser.add_argument("--extra-sensor-range", default="", help="as in 'bodyscan track': frames of a sensor "
+                            "with the person out of this range do not count in the scores")
+        parser.add_argument("--extra-sensor-noise", default="", help="as in 'bodyscan track'")
+        parser.add_argument("--switch-weight", type=float, default=0.05,
+                            help="cost of changing motion per metre the two motions are apart at that frame")
+        parser.add_argument("--whole-body-only", action="store_true", help="do not choose the arms on their own")
+        parser.add_argument("--holdout-fraction", type=float, default=0.0,
+                            help="as in 'bodyscan track': these points do not count in the scores either")
+        parser.add_argument("--holdout-seed", type=int, default=0)
+        parser.add_argument("--quiet", action="store_true")
+
+    def run(self, args):
+        set_quiet(args.quiet)
+        from bodyscan.dynamic.select import SelectOptions, select_motion
+        done = select_motion(args.motions, args.segments, args.avatar, args.out, args.extra_sensors, args.model,
+                             args.extra_sensor_range, args.extra_sensor_noise,
+                             SelectOptions(switch_weight=args.switch_weight, limbs=not args.whole_body_only,
+                                           holdout_fraction=args.holdout_fraction, holdout_seed=args.holdout_seed))
+        best = min(done["score_mm"], key=done["score_mm"].get)
+        info(f"chosen among {len(done['motions'])} motions over {done['frames']} frames in {done['seconds']:.0f} s: "
+             f"score {done['score_chosen_mm']:.2f} mm (best single motion {best} {done['score_mm'][best]:.2f} mm, "
+             f"whole-body choice {done['score_whole_body_choice_mm']:.2f} mm), {done['changes_of_motion']} changes "
+             f"of motion -> {done['out']}")
+        return 0
+
+
 class ExportMotion(ConfiguredCommand):
     """Animated meshes of a tracked motion for the radio simulation, and body tracks.
 
