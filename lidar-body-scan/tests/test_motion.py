@@ -430,6 +430,36 @@ class TrackingTest(unittest.TestCase):
         finally:
             folder.cleanup()
 
+    def test_tracking_a_short_walk_backwards(self):
+        # stage 1 from the last frame to the first: the motion comes out in the order of time and fits as well
+        from bodyscan.dynamic import evaluate
+        from bodyscan.dynamic.avatar import Avatar
+        from bodyscan.dynamic.bench import SimulateMotionConfig, make_take
+        from bodyscan.dynamic.segment import MotionSegmenter
+        from bodyscan.dynamic.track import TrackPipelineConfig, run_tracking
+        from bodyscan.body.testbody import cached
+        from bodyscan.io import NpzRecording
+        folder = TemporaryFolder()
+        try:
+            config = SimulateMotionConfig()
+            config.scenario.duration, config.scenario.distance, config.scenario.scan = 1.5, 2.2, False
+            take = make_take(folder.path / "take", cached(), config, quiet=True)
+            MotionSegmenter(NpzRecording(take)).run(folder.path / "segments")
+            tracking = TrackPipelineConfig()
+            tracking.tracking.reverse = True
+            summary = run_tracking(folder.path / "segments", take / "truth_avatar.npz", folder.path / "motion.npz",
+                                   tracking, start=30)
+            motion = np.load(folder.path / "motion.npz", allow_pickle=True)
+            self.assertTrue(np.all(np.diff(motion["times"]) > 0))
+            self.assertLess(summary["residual_median_mm"], 8.0)
+            model = load_test_body()
+            body = Avatar.load(take / "truth_avatar.npz").shaped(model, 0)
+            result = evaluate.evaluate(folder.path / "motion.npz", take, model, body, body)
+            self.assertLess(result["mpjpe_mm"]["mean"], 40.0)
+            self.assertLess(result["yaw_deg"], 8.0)
+        finally:
+            folder.cleanup()
+
     def test_tracking_a_jump_keeps_the_arms(self):
         # the arms swing overhead in 0.3 s: without the arm search the tracker lost them for good
         from bodyscan.dynamic import evaluate
@@ -455,6 +485,37 @@ class TrackingTest(unittest.TestCase):
             self.assertLess(result["mpjpe_mm"]["max"], 120.0)
             for hand in ("left_hand", "right_hand"):
                 self.assertLess(result["velocity_error"][hand]["rms_m_s"], 1.0)
+        finally:
+            folder.cleanup()
+
+
+    def test_beam_tracking_a_jump_keeps_the_arms(self):
+        # two tracks carried from frame to frame: as accurate as the ordinary tracker on the synthetic jump
+        from bodyscan.dynamic import evaluate
+        from bodyscan.dynamic.avatar import Avatar
+        from bodyscan.dynamic.bench import SimulateMotionConfig, make_take
+        from bodyscan.dynamic.segment import MotionSegmenter
+        from bodyscan.dynamic.track import TrackPipelineConfig, run_tracking
+        from bodyscan.body.testbody import cached
+        from bodyscan.io import NpzRecording
+        folder = TemporaryFolder()
+        try:
+            config = SimulateMotionConfig()
+            config.scenario.motion, config.scenario.jumps, config.scenario.distance = "jump", 1, 2.0
+            config.scenario.scan = False
+            take = make_take(folder.path / "take", cached(), config, quiet=True)
+            MotionSegmenter(NpzRecording(take)).run(folder.path / "segments")
+            tracking = TrackPipelineConfig()
+            tracking.tracking.beam_width = 2
+            run_tracking(folder.path / "segments", take / "truth_avatar.npz", folder.path / "motion.npz",
+                         tracking, start=30)
+            motion = np.load(folder.path / "motion.npz", allow_pickle=True)
+            self.assertTrue(np.all(np.diff(motion["times"]) > 0))
+            model = load_test_body()
+            body = Avatar.load(take / "truth_avatar.npz").shaped(model, 0)
+            result = evaluate.evaluate(folder.path / "motion.npz", take, model, body, body)
+            self.assertLess(result["mpjpe_mm"]["mean"], 30.0)
+            self.assertLess(result["mpjpe_mm"]["max"], 120.0)
         finally:
             folder.cleanup()
 
@@ -887,6 +948,44 @@ class TurnLimitTest(unittest.TestCase):
         self.assertTrue(backwards(None, rotation_z_np(np.pi), positions, times, 1.0))
         standing = [np.array([0.0, 0.0, 1.0]) for _ in times]
         self.assertFalse(backwards(None, rotation_z_np(np.pi), standing, times, 1.0))
+
+
+class BackwardTrackTest(unittest.TestCase):
+    """The helpers of stage 1 visited backwards in time (reverse): the same decisions as forwards on the
+    mirrored motion."""
+
+    def test_prediction_runs_backwards_in_time(self):
+        from bodyscan.body.rotations import rotation_z_np
+        from bodyscan.dynamic.track import Tracker
+        # visited backwards: the frame at 1.0 s, then the one at 0.9 s; the next visit is 0.8 s
+        rotations = [rotation_z_np(np.radians(20.0)), rotation_z_np(np.radians(10.0))]
+        positions = [np.array([1.0, 0.0, 1.0]), np.array([0.9, 0.0, 1.0])]
+        bodies = [np.zeros((21, 3)), np.full((21, 3), 0.1)]
+        rotation, position, body, _ = Tracker.predict(rotations, positions, bodies, [1.0, 0.9], 0.8, None, -1)
+        self.assertAlmostEqual(Tracker.yaw(rotation), np.radians(0.0), places=9)
+        np.testing.assert_allclose(position, [0.8, 0.0, 1.0], atol=1e-12)
+        np.testing.assert_allclose(body, 0.15, atol=1e-12)        # half the joint velocity, as forwards
+        # forwards, times that run backwards keep the last pose (unchanged behaviour)
+        rotation, position, _, _ = Tracker.predict(rotations, positions, bodies, [1.0, 0.9], 0.8)
+        np.testing.assert_allclose(position, positions[-1])
+
+    def test_turn_limit_and_running_backwards_mirror_the_forward_checks(self):
+        from types import SimpleNamespace
+        from bodyscan.body.rotations import rotation_z_np
+        from bodyscan.dynamic.track import Tracker, TrackPipelineConfig
+        tracker = SimpleNamespace(config=TrackPipelineConfig(), yaw=Tracker.yaw)
+        times = list(np.arange(0.0, 1.0, 0.05))
+        rotations = [rotation_z_np(np.radians(90.0 * t)) for t in times]       # turning at 90 deg/s
+        visit = list(reversed(times)), list(reversed(rotations))               # visited from 0.95 s down
+        check = Tracker.plausible_turn
+        self.assertTrue(check(tracker, rotation_z_np(np.radians(-4.5)), -0.05, visit[1], visit[0], -1))
+        self.assertTrue(check(tracker, rotation_z_np(np.radians(-40.0)), -0.05, visit[1], visit[0], -1))
+        self.assertFalse(check(tracker, rotation_z_np(np.radians(180.0)), -0.05, visit[1], visit[0], -1))
+        positions = [np.array([1.5 * t, 0.0, 1.0]) for t in times]             # running along +x at 1.5 m/s
+        backwards = Tracker.runs_backwards
+        reversed_positions = list(reversed(positions))
+        self.assertFalse(backwards(None, rotation_z_np(0.0), reversed_positions, visit[0], -0.05, -1))
+        self.assertTrue(backwards(None, rotation_z_np(np.pi), reversed_positions, visit[0], -0.05, -1))
 
 
 @needs_torch

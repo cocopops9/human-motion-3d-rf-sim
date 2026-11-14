@@ -254,6 +254,19 @@ class TrackConfig:
                                          "did not use; their pixels count as unknown (neither free space nor a "
                                          "measured surface)")
     holdout_seed: int = param(0, "seed of the held-out points (with the frame index)")
+    beam_width: int = param(0, "stage 1 carries this many tracks from frame to frame (bodyscan.dynamic.beam): each "
+                                "continued from the constant-velocity prediction and from its last pose held still, "
+                                "the cheapest distinct ones kept; the motion is the cheapest track at the end. 0 or "
+                                "1: the ordinary tracker (one track, facing checks); ignored with init_motion",
+                            effect="about twice this many fits per frame; a wrong decision of one frame can be undone "
+                                   "by the frames after it")
+    reverse: bool = param(False, "stage 1 runs backwards in time, from the last frame to the first (the motion is "
+                                 "written in the order of time as usual and stage 2 runs forwards): a limb lost in "
+                                 "fast motion is lost at other frames than in the forward track, so a forward and a "
+                                 "backward run give select-motion two different guesses where the data are "
+                                 "ambiguous",
+                          effect="true: the same energy, another path through it; with init_motion every frame "
+                                 "starts from the warm-start pose either way")
     finger_radius: float = param(0.06, "points within this distance of any of the 30 finger joints (of the "
                                        "warm-start pose with flat fingers, with init_motion) count as near the "
                                        "fingers: a secondary, tighter neighbourhood of the hands in the quality "
@@ -1573,7 +1586,9 @@ class Tracker:
         """Stage 1 over the segmented frames; returns arrays per frame. warm: {frame index: (root
         matrix, root position, body)} of a tracked motion (warm start, init_motion): a frame found there
         is fitted from that pose (fine scale only, with the continuity of stage 1) and not searched;
-        the other frames are tracked as usual."""
+        the other frames are tracked as usual. With the tracking option 'reverse' the frames are visited
+        from the last to the first (predictions, gaps, turn limits and searches run backwards in time) and
+        the arrays are returned in the order of time."""
         from bodyscan.body.rotations import matrix_to_axis_angle_np
         c = self.config.tracking
         count = len(self.segmented)
@@ -1587,10 +1602,14 @@ class Tracker:
         poor_run, last_check, since = 0, -10 ** 9, 0
         prediction = None
         progress = Progress("tracked frames", stop - start)
-        for k in range(start, stop):
+        # +1 forwards in time, -1 backwards (reverse): every 'later' below means later in the order of the visit
+        direction = -1 if c.reverse else 1
+        order = range(stop - 1, start - 1, -1) if c.reverse else range(start, stop)
+        for visited, k in enumerate(order):
             person = self.segmented.load(k)
             frame = self.frame_data(person)
-            if self.extra is not None and len(positions) >= 2 and not restarts[-1] and times[-1] > times[-2]:
+            if (self.extra is not None and len(positions) >= 2 and not restarts[-1]
+                    and direction * (times[-1] - times[-2]) > 0):
                 # additional sensors measured a few tens of milliseconds before or after the Ouster: every
                 # vertex moves to their time with its velocity over the last two frames
                 frame.set_velocity((self.vertices_of(rotations[-1], positions[-1], bodies[-1], extras[-1])
@@ -1601,10 +1620,10 @@ class Tracker:
             if warmed:
                 prediction = None
                 if rotations:
-                    gap = c.gap_frames > 0 and frame.time - times[-1] > c.gap_frames * self.frame_period
+                    gap = c.gap_frames > 0 and direction * (frame.time - times[-1]) > c.gap_frames * self.frame_period
                     last = slice(-1, None) if restarts[-1] or gap else slice(None)
                     prediction = self.predict(rotations[last], positions[last], bodies[last], times[last], frame.time,
-                                              extras[last])
+                                              extras[last], direction)
                 w_rotation, w_position, w_body = warm[int(person.index)]
                 result = self.fit_frame(frame, w_rotation, w_position, w_body, prediction, coarse=False,
                                         extra=None if prediction is None else prediction[3])
@@ -1618,10 +1637,10 @@ class Tracker:
             else:
                 # after a restart the last two poses do not give a velocity; after a gap (frames
                 # dropped) neither: a limb in motion before it would be thrown on along its velocity
-                gap = c.gap_frames > 0 and frame.time - times[-1] > c.gap_frames * self.frame_period
+                gap = c.gap_frames > 0 and direction * (frame.time - times[-1]) > c.gap_frames * self.frame_period
                 last = slice(-1, None) if restarts[-1] or gap else slice(None)
                 prediction = self.predict(rotations[last], positions[last], bodies[last], times[last], frame.time,
-                                          extras[last])
+                                          extras[last], direction)
                 result = self.fit_frame(frame, prediction[0], prediction[1], prediction[2], prediction)
                 explained = self.explain_fit(result, frame)
                 plain = (result, explained)                # the fit from the prediction, kept if a search turns
@@ -1647,7 +1666,7 @@ class Tracker:
                 explained = self.explain_fit(result, frame)
                 searched += 1
             if rotations and not warmed and not self.plausible_turn(result[0], frame.time, rotations[since:],
-                                                                    times[since:]):
+                                                                    times[since:], direction):
                 # people do not turn around between two frames: a search that did is wrong
                 result, explained = plain
                 restarted = False
@@ -1659,8 +1678,8 @@ class Tracker:
                 last_check = k
                 retry, retried = self.facing_retry(frame, result)
                 if (retried["score"] < explained["score"] - 0.003
-                        and not self.runs_backwards(retry[0], positions, times, frame.time)):
-                    if self.plausible_turn(retry[0], frame.time, rotations[since:], times[since:]):
+                        and not self.runs_backwards(retry[0], positions, times, frame.time, direction)):
+                    if self.plausible_turn(retry[0], frame.time, rotations[since:], times[since:], direction):
                         result, explained = retry, retried
                         turned += 1
                         poor_run = 0
@@ -1669,7 +1688,7 @@ class Tracker:
                         # facing wrongly (then, fitted again backwards from the new facing, they explain their
                         # points as well and the turn spreads over them) or the new facing is wrong
                         refits = self.connect_turn(retry, frame.time, rotations, positions, bodies, times, slots,
-                                                   scores, since, extras)
+                                                   scores, since, extras, direction)
                         if refits is None:
                             facing_refused += 1
                         else:
@@ -1705,7 +1724,15 @@ class Tracker:
             residuals.append(float(np.median(explained["distance"])))
             observed.append(explained["observed_parts"])
             scores.append(explained["score"])
-            progress.maybe(k - start + 1, 25)
+            progress.maybe(visited + 1, 25)
+        if c.reverse:
+            # back to the order of time; a restart marks a break before its frame, which in a backward
+            # visit lies between the restarted frame and the one after it in time
+            for values in (rotations, positions, bodies, times, indices, slots, energies, residuals, observed,
+                           scores, extras):
+                values.reverse()
+            breaks = restarts[::-1]
+            restarts = [True] + [bool(breaks[i - 1]) for i in range(1, len(breaks))]
         root = np.array([matrix_to_axis_angle_np(r) for r in rotations])
         if warm is not None:
             info(f"  {warmed_frames} of {len(rotations)} frames fitted from the warm-start motion")
@@ -1731,31 +1758,32 @@ class Tracker:
         """Facing direction [rad] of a root rotation (the forward axis +x of the upright frame)."""
         return float(np.arctan2(rotation[1, 0], rotation[0, 0]))
 
-    def plausible_turn(self, rotation, time: float, rotations, times) -> bool:
+    def plausible_turn(self, rotation, time: float, rotations, times, direction: int = 1) -> bool:
         """Whether the facing of 'rotation' at 'time' is within max_turn_rate (plus 40 deg) of the facing
-        of every frame tracked in the second before."""
+        of every frame tracked in the second before (after, direction -1: a backward track)."""
         c = self.config.tracking
         if c.max_turn_rate <= 0:
             return True
         yaw, rate, slack = self.yaw(rotation), np.radians(c.max_turn_rate), np.radians(40.0)
         for j in range(len(times) - 1, -1, -1):
-            elapsed = time - times[j]
+            elapsed = direction * (time - times[j])
             if elapsed > 1.0:
                 break
             if abs(np.angle(np.exp(1j * (yaw - self.yaw(rotations[j]))))) > rate * max(elapsed, 0.0) + slack:
                 return False
         return True
 
-    def runs_backwards(self, rotation, positions, times, time: float) -> bool:
+    def runs_backwards(self, rotation, positions, times, time: float, direction: int = 1) -> bool:
         """Whether a body facing as 'rotation' at 'time' would be moving backwards: its pelvis moved over
         the last half second faster than 0.6 m/s, in a direction more than 120 deg from that facing
         (people walk and run forwards; a person seen side-on and tracked facing backwards does not)."""
-        recent = [i for i in range(max(len(times) - 20, 0), len(times)) if 0.0 < time - times[i] <= 0.5]
+        recent = [i for i in range(max(len(times) - 20, 0), len(times))
+                  if 0.0 < direction * (time - times[i]) <= 0.5]
         if len(recent) < 3:
             return False
         first, last = recent[0], recent[-1]
         elapsed = times[last] - times[first]
-        if elapsed <= 0:
+        if direction * elapsed <= 0:
             return False
         velocity = (np.asarray(positions[last][:2]) - np.asarray(positions[first][:2])) / elapsed
         speed = float(np.linalg.norm(velocity))
@@ -1766,7 +1794,7 @@ class Tracker:
         return float(facing @ velocity) / speed < np.cos(np.radians(120.0))
 
     def connect_turn(self, candidate, time: float, rotations, positions, bodies, times, slots, scores, since: int,
-                     extras=None):
+                     extras=None, direction: int = 1):
         """The frames before a facing the body cannot reach from them, fitted again backwards from it
         (each from the one after it, with the continuity of stage 1 run backwards), as long as each
         explains its points about as well as before (connect_tolerance), turns physically from the one
@@ -1784,13 +1812,13 @@ class Tracker:
             data = self.load_frame(int(slots[i]))
             later = chain[-2:]                                               # in the order of time, reversed
             prediction = self.predict([s[0] for s in later], [s[1] for s in later], [s[2] for s in later],
-                                      [s[3] for s in later], times[i], [s[4] for s in later])
+                                      [s[3] for s in later], times[i], [s[4] for s in later], -direction)
             fitted = self.fit_frame(data, prediction[0], prediction[1], prediction[2], prediction)
             state = self.explain_fit(fitted, data)
             if state["score"] > scores[i] + c.connect_tolerance:
                 return None
             step = abs(np.angle(np.exp(1j * (self.yaw(fitted[0]) - self.yaw(chain[-1][0])))))
-            if step > rate * max(chain[-1][3] - times[i], 0.0) + slack:
+            if step > rate * max(direction * (chain[-1][3] - times[i]), 0.0) + slack:
                 return None
             refits.append((i, fitted, state))
             if abs(np.angle(np.exp(1j * (self.yaw(fitted[0]) - self.yaw(rotations[i]))))) < meet:
@@ -1812,12 +1840,14 @@ class Tracker:
         return retry, retried
 
     @staticmethod
-    def predict(rotations, positions, bodies, times, t, extras=None):
+    def predict(rotations, positions, bodies, times, t, extras=None, direction: int = 1):
         """Constant-velocity prediction of the next frame (rotation, position, body, extra); the extra
-        pose (None without 'extras') is predicted like the body joints."""
+        pose (None without 'extras') is predicted like the body joints. direction -1: the frames run
+        backwards in time (the last two given are the latest visited, earlier in time); with times that
+        do not run in 'direction' the last pose is kept."""
         from bodyscan.body.rotations import axis_angle_to_matrix_np, matrix_to_axis_angle_np
         extras = None if extras is None or any(e is None for e in extras) else list(extras)
-        if len(rotations) < 2 or times[-1] <= times[-2]:
+        if len(rotations) < 2 or direction * (times[-1] - times[-2]) <= 0:
             return rotations[-1], positions[-1], bodies[-1], None if extras is None else extras[-1]
         ratio = np.clip((t - times[-1]) / (times[-1] - times[-2]), 0.0, 3.0)
         delta = matrix_to_axis_angle_np(rotations[-1] @ rotations[-2].T)
@@ -2933,7 +2963,13 @@ def run_tracking(segment_folder, avatar_path, out, config: TrackPipelineConfig |
                  f"{entry['weight']:g}{used}" + ("" if entry["fitted"] else ", held out"))
         if not config.tracking.reference_count:
             info("  data term and misfit measures: means over the points of all sensors (reference_count off)")
-    result = tracker.track(start, stop, warm)
+    if config.tracking.beam_width > 1 and warm is None:
+        from bodyscan.dynamic.beam import BeamOptions, track_beam
+        if config.tracking.reverse:
+            raise ValueError("beam_width and reverse together are not implemented")
+        result = track_beam(tracker, start, stop, BeamOptions(width=config.tracking.beam_width))
+    else:
+        result = tracker.track(start, stop, warm)
     if tracker.extra is not None:
         for name, count in tracker.extra.dropped.items():
             if count:

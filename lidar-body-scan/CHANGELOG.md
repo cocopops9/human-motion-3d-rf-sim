@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (feature/multisensor): backward tracking, beam tracking (2026-11-14)
+
+Stage 1 decides every frame with that frame's points alone, and a wrong decision where an arm moves fast is
+carried on by the continuity terms. Two other ways through the same energy:
+
+- `track --reverse`: stage 1 visits the frames from the last to the first (prediction, gaps, turn limit,
+  facing checks and the spread of a turn run backwards in time); the motion is written in the order of time
+  and stage 2 runs forwards as before. Forward runs are unchanged to the last bit.
+- `track --beam-width N` (`bodyscan.dynamic.beam`): N tracks carried from frame to frame, each continued
+  from its constant-velocity prediction and from its last pose held still; each continuation costs its
+  explain() score plus 0.05 per metre of the largest joint distance from its prediction beyond 3 cm; the
+  cheapest distinct N carry on, and the motion is the cheapest track at the end. About 2N fits per frame;
+  no facing checks; not with `--reverse` or `--init-motion`.
+- Local windows, three sensors with all changes of 12 Nov (noise by range, range limits, toe prior), two
+  runs per approach differing only in rounding; Ouster points 5 to 25 cm from the body (lower is better):
+  s02_jump01 225 to 261: forward 1057 and 737; backward 463 and 517; beam of 3, 614 and 611 (3.5 times the
+  time of a forward run); stage 2 with 5 correspondence rounds instead of 2, 1046 and 733 (no effect: stage 2
+  does not undo the decisions of stage 1); select-motion among two forward runs 503, among a forward and a
+  backward run 335 and 461 (disjoint runs), among all four 442. Two forward runs put an arm more than 10 cm
+  apart in 13 of 37 frames, two backward runs in 0, two forward-backward selections in 2.
+  s02_walk01 225 to 319 (no fast arm motion): forward 747 and 764, backward 770 and 763; selections among
+  two forward runs 713, among a forward and a backward run 702 and 721.
+- Tests: the backward prediction, turn limit and facing check mirror the forward ones; a synthetic walk
+  tracked backwards, a synthetic jump tracked with a beam of 2 (slow).
+
 ## Unreleased (feature/multisensor): selection among several runs of a take (2026-11-13)
 
 The fit of a frame has several local minima where an arm moves fast, and two runs of the same configuration
