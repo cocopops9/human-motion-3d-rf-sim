@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (feature/multisensor): hand search in warm starts; findings on the Xtion's range and the hands (2026-11-14)
+
+- `hand_starts` now also searches the hands in the frames of a warm start (`--init-motion`): the warm start
+  carries the body pose only, so the hands started from the frame before (or the mean hand) and a hand
+  started flat stayed flat. Without `--hand-starts` nothing changes.
+- The Xtion's points against the Ouster-only fits of job 20340 (R1, the Xtion held out), by the person's
+  distance from the Xtion: residual median about 20 mm and signed bias within 4 mm from 1.8 to 3.4 m; 34 mm
+  and +31 mm at 3.4 to 3.8 m, 54 mm and +54 mm at 3.8 to 4.2 m (the Xtion PRO Live is specified for 0.8 to
+  3.5 m). With the range limit at 4.2 m those points turned the body in the turns at the far end of
+  s02_walk03_radial (unexplained share 8 to 15 % against 1 % with the Ouster alone; the pelvis turning at
+  up to 510 deg/s). On frames 180 to 244 of that take: Ouster points 5 to 25 cm off 1646 and 1624 with the
+  Xtion up to 4.2 m, 694 and 689 up to 3.4 m, 502 with the Ouster alone; select-motion among the 4.2 m runs
+  and the Ouster-only run, scored and refined with the Xtion up to 3.4 m, 598 (1814 when scored and refined
+  with 4.2 m). Use `--extra-sensor-range xtion:1.3:3.4,...`.
+- Hands, s02_natural01 frames 585 to 629 (boxing with closed fists), warm start from the final motion of job
+  20340: with the flat mean hand the fingers stay flat (mean joint bend 2 to 3 deg) even when searched from
+  starts between open and closed (`--hand-starts 4`); with the mean (relaxed) hand they bend about 34 deg;
+  the distances of the points near the fingers differ by at most 1 mm between these: at 2.5 to 3 m the
+  points do not tell an open hand from a fist, and the hand shown is the prior's.
+
 ## Unreleased (feature/multisensor): backward tracking, beam tracking (2026-11-14)
 
 Stage 1 decides every frame with that frame's points alone, and a wrong decision where an arm moves fast is

@@ -310,7 +310,8 @@ class TrackConfig:
                                 "of its middle knuckle is fitted again (body fixed) from its fitted coefficients and "
                                 "from this many starts of its first PCA coefficient, from 0 (the mean hand) to minus "
                                 "hand_start_spread (closed); the start of lowest energy is kept (0: off). A fit "
-                                "started flat leaves the fingers flat (October pilot)",
+                                "started flat leaves the fingers flat (October pilot). Also in the frames of a warm "
+                                "start (init_motion), which carries the body pose only",
                          effect="more starts cost time in the frames where a hand is seen closely")
     hand_search_points: int = param(25, "points near a hand needed for its search (hand_starts)")
     hand_search_every: int = param(10, "the hand search (hand_starts) runs in every this-many-th tracked frame; the "
@@ -1702,7 +1703,9 @@ class Tracker:
                             turned += 1
                             connected += len(refits)
                             poor_run = 0
-            if (c.hand_starts > 0 and self.layout.full and not warmed
+            # also in the frames of a warm start: it carries the body pose only, the hands start from the frame
+            # before (or the mean hand), so without the search a hand started flat stays flat
+            if (c.hand_starts > 0 and self.layout.full
                     and (k - start) % max(c.hand_search_every, 1) == 0):
                 searched_hands = self.search_hands(frame, result, None if restarted else prediction)
                 if searched_hands is not result:
