@@ -133,6 +133,23 @@ also more noise, so check the mesh quality report (facet noise, bump height)
 against the needs of the ray tracer. Smoothness for ray tracing comes first,
 as discussed with Marco; the fingers are secondary.
 
+## 6. The Helios 16P and the Xtion PRO Live, as measured on 3 Nov 2026
+
+Since version 1.8 the tracker also uses a RoboSense Helios 16P and an ASUS Xtion PRO Live
+([multisensor.md](multisensor.md)). What the first recorded session showed about them, measured against
+the body fitted to the Ouster alone (the Ouster is the reference; no ground truth):
+
+| | Helios 16P | Xtion PRO Live |
+|---|---|---|
+| what it adds | a second spinning LiDAR from another side: 16 beams, 2 deg apart; on the person 39 to 64 mm between samples, so it tells where a part is, not its shape | dense depth (3 to 6 mm between samples on the visible surface), the only sensor that resolves the shape of a part it sees |
+| distance of the points to the body | median 14 mm (12 to 16 mm per take in the final motions) | median 20 mm (16 to 20 mm per take); depth steps of about 2.6 cm at 3.2 m |
+| useful range on the person | 3.4 to 5.2 m in the recorded layout (signed offset 2 to 6 mm over it) | 1.3 to 3.4 m: beyond 3.4 m its points lie 3 to 5 cm outside the body (34 mm median and +31 mm offset at 3.4 to 3.8 m, 54 and +54 mm at 3.8 to 4.2 m); closer than about 1.3 m it returned a fraction of the body with errors of 10 to 30 cm. The datasheet gives 0.8 to 3.5 m |
+| calibration | its packets carry a horizontal angle per laser (alternating +3.1 and -7.5 deg, two columns of lasers); without it the person appears twice, 10.6 deg apart. The person is seen about 8 cm short at 4 m while the room agrees with the Ouster within 6 mm: a range correction of the person's pixels only | a static calibration on the floor and one wall was about 35 cm off sideways; corrected on the person (yaw and a shift in the floor plane; inverse-depth offset -0.0031 per m) |
+| time | consistent with the Ouster's clock (2 to 3 ms); one azimuth is seen by its two columns of lasers 29 ms apart | 33 ms late against its labels (residual lag after correction 0.5 ms median) |
+
+For the next session: keep the person 1.4 to 3.0 m from the Xtion and 3.5 to 5 m from the Helios, record
+on AC power, and recalibrate after moving any sensor.
+
 ## Sources
 
 - [Ouster OS0 datasheet (via RobotShop)](https://cdn.robotshop.com/rbm/1452f63b-45fa-4c16-b9a5-44447596ee17/9/926a2a4b-0ddc-418d-846e-6e4dcc5a9173/85f35666_209129079.pdf): field of view, beam diameter, divergence, range precision

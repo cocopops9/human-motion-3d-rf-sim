@@ -1,6 +1,6 @@
 # Multi-sensor capture and reconstruction: plan for bodyscan 2
 
-Status: accepted, 2026-10-21; first part implemented in bodyscan 1.7.0 (section 16). Owner: Giuseppe D'Auria (Università di Padova, IMDEA Networks). Executor: Claude Code on the recording laptop. Where this plan and docs/motion.md disagree, this plan wins for new work; docs/motion.md stays the reference for the single-LiDAR tracker 1.6.0.
+Status: accepted, 2026-10-21; first part implemented in bodyscan 1.7.0 (section 16), the multi-sensor tracker in 1.8.0 (section 17; user guide: docs/multisensor.md). Owner: Giuseppe D'Auria (Università di Padova, IMDEA Networks). Executor: Claude Code on the recording laptop. Where this plan and docs/motion.md disagree, this plan wins for new work; docs/motion.md stays the reference for the single-LiDAR tracker 1.6.0.
 
 ## 0. Summary
 
@@ -395,7 +395,7 @@ Per take, a preprocessing step writes `view_cache.npz` (decimated points per fra
 
 * **Raw sessions on the NAS.** The Ouster writes about 115 GB/h and the Xtion up to 66 GB/h. The cluster home is limited to about 26 GB and must never hold raw data. The NAS mount paths on the laptop and on the cluster are to be discovered by Claude Code in Stage 0.
 * **Cluster.**
-  * Never compute on login.dei.unipd.it.
+  * Never compute on the cluster's login node.
   * Jobs are cancelled below 10 % GPU efficiency or below 60 % CPU efficiency.
   * The multi-sensor tracker should run on GPU in float32 with batched evaluation (all points of a stage 2 window at once, several held-out runs per job), so that GPU use stays well above the threshold. Otherwise it uses CPU nodes as for 1.4.1.
   * One array task per take and configuration; results go to versioned folders (results_vXXX).
@@ -486,3 +486,33 @@ Coverage of the body (mean share visible to some sensor; test body, zone centre 
 | Xtion opposite, Helios at the side (landscape, 2.5 m) | 90 % | 91 % | 92 % | 79 % |
 
 Next: run `evaluate-take` on the 27 s02 takes of 1.6.0 and look at them with `view`; rerun `bench-rig` with the s02 avatar; then S0 (hardware bring-up) and S1 (recorders).
+
+## 17. Status on 15 Nov 2026 (bodyscan 1.8.0)
+
+The session of 3 Nov 2026 was recorded with the three sensors (subject s02, 8 takes of the October list,
+with empty-room and calibration recordings) and tracked with all of them. User guide
+and results: [multisensor.md](multisensor.md).
+
+| Stage | State |
+|---|---|
+| S0 hardware bring-up, S1 recorder | done, with session tools outside this repository (one process per sensor on the recording laptop, a shared clock, sound cues, a preflight check); not the `capture-session` command planned in section 6.7 |
+| S2 bench and placement | coverage done (`bench-rig`); the placement of 3 Nov was chosen from it; the tracking errors of other layouts are not measured |
+| S3 calibration and synchronisation | done for the session of 3 Nov, outside this repository: static calibration on the room, then on the person against the Ouster-only body (Helios: range correction of about 8 cm at 4 m on the person; Xtion: yaw and planar shift, inverse-depth offset); time offsets from 16 windows (Xtion 33 ms late, Helios consistent with zero) |
+| S4 multi-sensor tracker | done, first version (`track --extra-sensors`, per-sensor geometry, free space and timing, noise by range, range limits, reference count, held-out sensors); also the full pose with the hands (ADR 0002), the choice among runs (`select-motion`), backward and beam tracking; the synthetic multi-sensor bench of section 8.4 is not done |
+| S5 avatar | not started: the s02 avatar of the October turntable scan is used |
+| S6 metrics and heatmap | per-sensor residuals, fitted and held out, in every motion; `viewer-pack` with joint uncertainty; `evaluate-take` not yet extended to several sensors |
+| S7 viewer | a browser viewer of the packs (outside this repository); `view` unchanged |
+| S8 cluster pipeline | job scripts outside this repository: every take and configuration on the IMDEA cluster, CPU only (the tracker is CPU bound: one A100 ran two takes at 7.4 s per frame, a node's CPUs more in total) |
+| S9 recording day | done on 3 Nov 2026 |
+| S10 processing and evaluation | first pass done: 8 takes x 8 configurations, selection and full pose (multisensor.md, section 6); held-out-sensor runs done (Ouster alone, Ouster and one sensor) |
+| S11 Sionna RT export | not started |
+
+Findings that change this plan: the Xtion is useful from 1.3 to 3.4 m only (section 2.1 quotes 0.8 to 3.5
+m; beyond 3.4 m its points lie 3 to 5 cm off the body); fingers are not resolved at 2.5 to 3 m by any of the
+three sensors; an arm that only the Xtion sees at 3 m stays ambiguous; one tracking run is a sample (runs
+that differ only in rounding disagree on fast arms), so configurations are compared on repeated runs and
+the final motion is chosen among several.
+
+Next: the second half of the backward-tracking comparison (backward runs of every take, chosen with the
+forward ones); a motion prior for unobserved limbs; the placements S and W proposed for the next session
+(the Xtion closer, the person kept 1.4 to 3.0 m from it, a phone video as a reference); then S5 and S11.

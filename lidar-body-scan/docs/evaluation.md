@@ -8,6 +8,8 @@ bodyscan 1.7.0 adds three commands that replace the review videos with numbers a
 | `view` | What does the take look like: points, body, guessed limbs, heatmaps, at any frame? |
 | `bench-rig` | How much of the body would each candidate layout of the Ouster, Helios and Xtion see? |
 
+bodyscan 1.8.0 adds `viewer-pack` (section 5), which packs a take tracked with several sensors for an interactive viewer, with the points of every sensor and the joint position uncertainty; the results it gave on the recording of 3 Nov 2026 are in [multisensor.md](multisensor.md), section 6.
+
 ## 1. What can be measured without a reference
 
 No MoCap is available, so on real data every error is a consistency with the measurements, never an accuracy. A body part that no sensor observed has no error value: it is drawn grey in the heatmaps and marked "not observed" in the tables, never green. Accuracy against a known truth comes only from the synthetic bench (`bench-motion`), and, with several sensors, from residuals against a sensor that the fit did not use (planned, see docs/multisensor-plan.md section 8.3).
@@ -95,7 +97,7 @@ Open http://localhost:8080. The panel holds:
 * **Numbers**: the frame (time, flags, guessed limbs, pixel classes) and the take (evaluation summary, worst parts by p95).
 * **Curves**: violation and unexplained shares per frame over the take.
 
-The viewer needs an evaluation folder only for the heatmaps, the numbers and the curves; without it the points, the body and the guessed limbs are shown. On a cluster node, forward the port (`ssh -L 8080:<node>:8080 dauriagius@login.dei.unipd.it`) and open it locally.
+The viewer needs an evaluation folder only for the heatmaps, the numbers and the curves; without it the points, the body and the guessed limbs are shown. On a cluster node, forward the port (`ssh -L 8080:<node>:8080 <user>@<login node>`) and open it locally.
 
 ## 4. bench-rig
 
@@ -120,9 +122,27 @@ First results with the procedural test body (1.76 m), zone centre 2.3 m from the
 
 Reading: only the 120 deg triangle keeps about 91 % of the body visible in the side-on jumps, the motion on which the single-LiDAR tracker failed. With the triangle, the Xtion in landscape at 2.5 m sees the walk across better than in portrait at 2.2 m (91 % against 85 %), because the wider view keeps the walker in frame; the price is more depth noise (about 10 mm against 8 mm, scaled from Kinect v1 measurements). On the visible surface the Xtion samples every 3 to 6 mm, the Ouster every 25 to 37 mm and the Helios every 39 to 64 mm: the Helios tells where a part is, not its shape.
 
-Limits: geometry only (no noise, dropouts or tracking); the test body, not the subject; two-second motions; no furniture or other occluders. Rerun with the subject's avatar before choosing; the tracking errors of a layout follow when the multi-sensor tracker exists.
+Limits: geometry only (no noise, dropouts or tracking); the test body, not the subject; two-second motions; no furniture or other occluders. Rerun with the subject's avatar before choosing. The layout of 3 Nov 2026 and what the tracker made of it are in [multisensor.md](multisensor.md).
 
-## 5. Synthetic check of evaluate-take (tests/test_evaluation.py)
+## 5. viewer-pack
+
+```
+python -m bodyscan viewer-pack results\s02_walk01\motion.npz --segments s02_walk01_seg --extra-sensors s02_walk01_extra
+    --avatar s02_avatar.npz --model SMPLX_MALE.npz --hand-pca SMPLX_MALE_v11.npz
+    --out viewer_packs\<run>\s02_walk01 --uncertainty-step 5
+```
+
+One folder per run and take, `<root>/<run>/<take>`, with three files:
+
+| File | Content |
+|---|---|
+| `viewer_frames.npz` | per frame: the pose (root, body, and for full55 the extra pose and the 30 finger joints), the 55 joints, the sensors' positions, which sensors the run fitted and in which frames it used them; per sensor and frame the person's distance from it, the points, the median, p90 and signed median distance of the points to the body, the share of points 5 to 25 cm off (unexplained), the held-out distance; per body part and sensor the points and their distances; free space, floor, joint limits, flags, contacts, guessed limbs, points near each hand, joint speeds, accelerations, jerk, sliding of the feet, trunk twist, toe angles; the run's summary and options |
+| `viewer_points.npz` | the points of every sensor in frame order (`frame_offsets` gives each frame's slice): position, sensor, distance and signed distance to the body, nearest face and body part, time from the frame's time (distances and times as float16); per frame and sensor the vertices in its sight (bit-packed) |
+| `viewer_uncertainty.npz` | with `--uncertainty-step N`, every N frames: the standard deviation of every joint position from the Gauss-Newton covariance of the fitted points (the run's own sensors, in the frames it used them) |
+
+Every sensor of the take is packed, also one the run left out (`--exclude-sensors`): its points are then an independent check of the pose. The viewer that reads these packs (a page served by a small Python server, three.js) is not part of this repository yet.
+
+## 6. Synthetic check of evaluate-take (tests/test_evaluation.py)
 
 A simulated standing person (test body, 512 x 20 LiDAR at 2 m) evaluated with its true motion and with the same motion moved 8 cm towards the sensor:
 

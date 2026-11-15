@@ -1,6 +1,53 @@
 # Changelog
 
-## Unreleased (feature/multisensor): hand search in warm starts; findings on the Xtion's range and the hands (2026-11-14)
+## 1.8.0: several sensors, the hands, and the final motion chosen among runs (2026-11-15)
+
+The tracker uses additional sensors recorded in the same take (on 3 Nov 2026 a RoboSense Helios 16P and an
+ASUS Xtion PRO Live next to the Ouster OS0-128), fits the hands, the jaw and the eyes (`--pose-model
+full55`), can run backwards in time (`--reverse`) or carry several tracks (`--beam-width`), and a take is
+put together from several runs frame by frame (`select-motion`). User guide: docs/multisensor.md; design:
+docs/adr/0002-full-pose-55.md and docs/adr/0003-additional-sensors-and-choice-among-runs.md; status of the
+plan: docs/multisensor-plan.md, section 17. The subsections below are the steps in which it was built,
+newest first.
+
+Measured on the 8 takes of 3 Nov (10,800 frames; every take tracked with 8 configurations, 10 % of every
+sensor's points held out of every fit; medians over the takes; no ground truth):
+
+| Run | Ouster residual | Ouster held out (worst take) | Ouster points unexplained | limb uncertainty | acceleration p95 | toe |
+|---|---|---|---|---|---|---|
+| first three-sensor production (mean over all points, full pose) | 7.09 mm | | 1.88 % | 13.2 mm | 47.4 m/s² | -21.2° |
+| reference count, ranges, noise by range, toe prior (one run; its repeat) | 7.23; 7.09 mm | 7.31 (11.02); 7.25 (7.60) mm | 1.24; 1.23 % | 10.5; 10.6 mm | 37.7; 37.2 m/s² | -0.1° |
+| Ouster alone | 6.56 mm | 6.74 (11.85) mm | 1.16 % | 34.2 mm | 31.9 m/s² | 0.0° |
+| choice among 7 runs per take, last pass, full pose (final) | 6.67 mm | 6.84 (7.25) mm | 1.02 % | 10.9 mm | 35.7 m/s² | -0.1° |
+
+* Every single configuration lost a whole take at least once (held-out distance 11 to 12 mm against 6 to
+  7.7 mm elsewhere); the choice among runs never did.
+* Unexplained: share of the Ouster's points 5 to 25 cm from the body. Limb uncertainty: largest standard
+  deviation of the knees, ankles, elbows and wrists from the Gauss-Newton covariance, median over frames.
+
+Recommended settings: `--extra-sensor-noise xtion:2.0:0.26 --extra-sensor-range xtion:1.3:3.4,helios:3.4:5.2
+--toe-weight 0.3 --init-full 8`; several runs per take (forward, backward, sensor combinations) and
+`select-motion`; the hands from a warm start with `--no-flat-hand-mean`.
+
+Also in this version: `--init-full N` (the start pose from whole fits from N facings: the earlier start
+tracked 4 of 16 reference windows facing backwards), the hand search (`--hand-starts`) in warm-start
+frames, `review-motion --extra-sensors` and `--focus hands`, `track --joints-csv`; the help of
+`--extra-sensor-range` gives the Xtion's useful range; docs/parameters.md regenerated (15 new options; a few section
+descriptions no longer indented, which Markdown showed as code); docs/evaluation.md no longer names a cluster account.
+
+Not kept: stage 2 with more correspondence rounds (no effect beyond 2 mm); the beam as the default (dominated
+by a backward run plus the choice among runs, at 3.5 times the time of a forward run); the Xtion beyond
+3.4 m.
+
+Not validated: the prior weights of the hands and the face; backward and beam tracking beyond two windows
+of two takes; the Xtion's useful range beyond one session and one camera; the calibration of the additional
+sensors is made against the Ouster and the avatar, so a bias of either is not seen. The decoding,
+calibration and segmentation tools of the three-sensor rig are not in this repository yet.
+
+Tests: 170 fast tests pass (14 slow ones skipped); with `BODYSCAN_SLOW_TESTS=1` 183 pass and 1 is skipped (the viewer test,
+without viser), in 48 min on one CPU thread.
+
+### Hand search in warm starts; the Xtion's useful range; the hands (2026-11-14)
 
 - `hand_starts` now also searches the hands in the frames of a warm start (`--init-motion`): the warm start
   carries the body pose only, so the hands started from the frame before (or the mean hand) and a hand
@@ -20,7 +67,7 @@
   the distances of the points near the fingers differ by at most 1 mm between these: at 2.5 to 3 m the
   points do not tell an open hand from a fist, and the hand shown is the prior's.
 
-## Unreleased (feature/multisensor): backward tracking, beam tracking (2026-11-14)
+### Backward tracking, beam tracking (2026-11-14)
 
 Stage 1 decides every frame with that frame's points alone, and a wrong decision where an arm moves fast is
 carried on by the continuity terms. Two other ways through the same energy:
@@ -45,7 +92,7 @@ carried on by the continuity terms. Two other ways through the same energy:
 - Tests: the backward prediction, turn limit and facing check mirror the forward ones; a synthetic walk
   tracked backwards, a synthetic jump tracked with a beam of 2 (slow).
 
-## Unreleased (feature/multisensor): selection among several runs of a take (2026-11-13)
+### Selection among several runs of a take (2026-11-13)
 
 The fit of a frame has several local minima where an arm moves fast, and two runs of the same configuration
 that differ only in rounding settle differently (below). The measurements usually tell which is right.
@@ -62,7 +109,7 @@ that differ only in rounding settle differently (below). The measurements usuall
   two single runs in 11 to 13. s02_walk01 225 to 319: 679 against 668 to 1985 for the single runs.
 - Tests: the path of least cost, the pose put together from several motions.
 
-## Unreleased (feature/multisensor): weighting of the additional sensors, viewer packs (2026-11-12, audited 2026-11-13)
+### Weighting of the additional sensors, viewer packs (2026-11-12, audited 2026-11-13)
 
 Diagnosis of the three-sensor production of 3 Nov (job 16527): with several sensors the data term and the
 misfit measures were means over the points of all sensors, so the Xtion's points (up to 2800 per frame at
@@ -103,7 +150,7 @@ Corrections of 13 Nov (audit of the changes above):
 - Tests: the range limits and their count in `ExtraSensors`, the Ouster's point count and the noise by range
   in `FrameData`, the cases in which the mean applies.
 
-## Unreleased (branch feature/multisensor, on feature/full-pose-55): the tracker with several sensors
+### The tracker with several sensors (2026-11-06)
 
 Added (stage S4 of docs/multisensor-plan.md, first version; validated on one synthetic take, not yet on
 recorded takes):
@@ -133,7 +180,7 @@ Checked: with the Ouster alone (no `--extra-sensors`) the motion of a synthetic 
 of feature/full-pose-55 (all 38 arrays of motion.npz; only the stored configuration differs by the new
 fields).
 
-## Unreleased (branch feature/full-pose-55): all 55 joints in the tracker
+### All 55 joints in the tracker (2026-10-26 and 27)
 
 Added (ADR 0002; not validated on recorded takes yet):
 

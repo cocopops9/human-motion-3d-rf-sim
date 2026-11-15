@@ -26,10 +26,12 @@ bodyscan/
     synthetic.py     synthetic scenes and recordings
     body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body,
                      anatomy (hinge joints, joint speeds)
-    dynamic/         moving people: motions, simulation, segmentation, avatar, tracking,
-                     evaluation, export, review, test bench
+    dynamic/         moving people: motions, simulation, segmentation, avatar, tracking (one or
+                     several sensors, body or full pose, forwards, backwards or as a beam),
+                     choice among runs, evaluation, export, review, test bench
     evaluation/      fit quality without ground truth: pixel classes, per-vertex error map,
-                     part tables, kinematics, heatmaps, coverage of the body by a rig
+                     part tables, kinematics, heatmaps, coverage of the body by a rig,
+                     viewer packs
     viewer/          interactive viewer of tracked takes (Viser, optional)
     commands/        the command line
 ```
@@ -170,6 +172,23 @@ limbs near the misfit; the trunk search untwists and turns the body). A new
 term goes into one of these functions with its weight in `TrackConfig` or
 `RefineConfig`; a new starting pose of the search into `LEG_STARTS` or
 `ARM_STARTS`.
+
+Since 1.8 the tracker takes additional sensors (`dynamic.views`: a
+`views.json` folder per take; `dynamic.extra_segment` finds the person in
+their images). Each sensor has its own image geometry (`RangeImageGeometry`
+for spinning LiDARs, `views.PinholeGeometry` for depth cameras) and its own
+visible faces, free-space and in-front terms; `FrameData` holds the points of
+all sensors with their noise relative to the Ouster's, and `Tracker.data_count`
+says what the data term is divided by (the Ouster's point count, or the mean
+as before). `pose_model full55` adds the jaw, the eyes and the MANO PCA hands
+as an extra vector (`dynamic.fullpose.PoseLayout`). Stage 1 can visit the
+frames backwards (`tracking.reverse`; every time comparison in `track`,
+`predict`, `plausible_turn`, `runs_backwards` and `connect_turn` takes the
+direction) or carry several tracks (`dynamic.beam.track_beam`, which reuses
+`fit_frame`, `explain` and `recover_limbs`). `dynamic.select` scores finished
+motions frame by frame with `Tracker.explain` and writes the chosen poses as a
+motion for the warm start (`tracking.init_motion`); `evaluation.pack` writes
+the viewer packs.
 
 ### Commands register themselves (`commands.base`)
 

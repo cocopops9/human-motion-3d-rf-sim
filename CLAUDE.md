@@ -11,7 +11,7 @@ Thesis monorepo for "3D Reconstruction of Human Motion for RF Sensing Simulation
 
 ## Current work
 
-Read `lidar-body-scan/docs/multisensor-plan.md` first: the extension of bodyscan from one Ouster LiDAR to any combination of Ouster OS0-128, RoboSense Helios 16 and an ASUS Xtion depth camera, with new avatars, metrics, heatmaps and an interactive viewer (its section 16 gives the state). `lidar-body-scan/docs/evaluation.md` documents `evaluate-take`, `view` and `bench-rig` (1.7.0); `lidar-body-scan/docs/motion.md` documents the single-LiDAR tracker; `lidar-body-scan/docs/adr/` holds the design decisions.
+Read `lidar-body-scan/docs/multisensor.md` first: the tracker with several sensors (1.8.0), the recipe used for the recording of 3 Nov 2026, its results and its measured limits. `lidar-body-scan/docs/multisensor-plan.md` is the plan of the multi-sensor work (section 17 gives the state); `lidar-body-scan/docs/evaluation.md` documents `evaluate-take`, `view`, `bench-rig` and `viewer-pack`; `lidar-body-scan/docs/motion.md` documents the tracker itself (every term of the energy); `lidar-body-scan/docs/adr/` holds the design decisions. One tracking run is a sample: compare configurations on repeated runs (for example the robust scale changed by 3e-8 of its value), and put final motions together with `select-motion`.
 
 ## Layout
 

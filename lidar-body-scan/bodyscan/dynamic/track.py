@@ -290,7 +290,9 @@ class TrackConfig:
                                         "replacing views.json: 'name:nearest:farthest,...' [m]; frames outside are "
                                         "dropped. The Xtion of 3 Nov returned a fraction of the body with errors of "
                                         "10 to 30 cm when the person stood closer than about 1.3 m (take s02_walk01, "
-                                        "frames 240 to 252: an arm followed them over the head and stayed for 3 s)")
+                                        "frames 240 to 252: an arm followed them over the head and stayed for 3 s), "
+                                        "and points 3 to 5 cm off the body beyond 3.4 m (its specified range is 0.8 "
+                                        "to 3.5 m): use xtion:1.3:3.4")
     reference_count: bool = param(True, "with several sensors, the data term and the misfit measures of a frame "
                                         "(unexplained share, score of the searches) are sums over the points of all "
                                         "sensors divided by the number of points of the Ouster, so that another "

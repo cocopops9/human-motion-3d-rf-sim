@@ -14,6 +14,13 @@ is fitted to every frame, and only generic physical and anatomical rules
 motion) fill what one sensor cannot see. Section 7 says what that
 leaves uncertain.
 
+Since version 1.8 the same tracker also uses additional sensors seen in the
+same take (a second LiDAR, a depth camera), fits the hands and the face
+(`--pose-model full55`), can run backwards in time (`--reverse`), and a
+take can be put together from several runs (`select-motion`). Those are
+described in [multisensor.md](multisensor.md); this page stays the reference
+for the tracker itself, which every one of them uses.
+
 ## 1. The workflow in eight commands
 
 ```
@@ -684,7 +691,9 @@ was observed, and per limb how much of it was guessed, so that a radio study
 can tell measured from inferred motion. If the radar will stand next to the LiDAR, the
 parts the LiDAR misses are mostly the parts the radar does not illuminate
 directly (moderate confidence: reflections from walls reach the far side).
-A second LiDAR on the other side would measure them.
+A second LiDAR or a depth camera on the other side measures them (version
+1.8, [multisensor.md](multisensor.md)); a limb that no sensor sees well stays
+a guess there too.
 
 **A human body, not this person's.** Since version 1.6 the joints keep
 the ranges of an average adult (hinges, wrist and spine ranges), turn no
@@ -697,9 +706,12 @@ one in a walk or a jog (section 6).
 
 **Fingers.** The LiDAR does not resolve fingers at these distances (beam
 footprint 14 to 26 mm and beams 19 to 43 mm apart at 1.5 to 3.5 m; a finger
-is about 17 mm wide; docs/hardware.md). The hands are positioned by the
-forearms and keep the relaxed hand pose of the model. Finger motion needs
-cameras or gloves.
+is about 17 mm wide; docs/hardware.md). With the body pose (`body21`) the
+hands are positioned by the forearms and keep the hand pose of the model
+file. With `full55` (version 1.8) six PCA coefficients per hand are fitted,
+but on a recorded boxing window at 2.5 to 3 m the points did not tell an
+open hand from a fist even with three sensors (multisensor.md, section 7):
+the hand shown is the prior's. Finger motion needs cameras or gloves.
 
 **Time resolution.** 20 frames per second sample the motion up to 10 Hz.
 Gait has content up to about 8 to 15 Hz at the feet, so the fastest parts of

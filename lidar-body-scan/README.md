@@ -4,10 +4,10 @@
 
 <br>
 
-![version](https://img.shields.io/badge/version-1.7.1-3fd0b9?style=flat-square)
+![version](https://img.shields.io/badge/version-1.8.0-3fd0b9?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![deps](https://img.shields.io/badge/needs-numpy%20%2B%20open3d-0d1514?style=flat-square)
-![sensor](https://img.shields.io/badge/sensor-Ouster%20OS0--128-f0a05a?style=flat-square)
+![sensor](https://img.shields.io/badge/sensors-Ouster%20OS0--128%20%2B%20Helios%2016%20%2B%20Xtion-f0a05a?style=flat-square)
 ![target](https://img.shields.io/badge/for-Sionna%20RT-b7a2f7?style=flat-square)
 ![motion](https://img.shields.io/badge/moving%20people-PyTorch%20%2B%20SMPL--X-ee4c2c?style=flat-square)
 
@@ -115,7 +115,13 @@ Version 1.2 animates the person. The turntable scan gives the person's body (the
 
 <p align="center"><sub>Synthetic data: the procedural test body walking 2 m from a simulated OS0-128 (1024 x 20), tracked by <code>bodyscan track</code>. Green dots are the LiDAR points of each frame, on the tracked body. Top: seen from the LiDAR. Bottom: the same instants from the far side, where the sensor saw almost nothing; that side follows from the body model and the motion rules, not from data.</sub></p>
 
-The motion comes only from the LiDAR. Where one sensor cannot see (the arm on the far side), the limb is guessed from its partner on the other side, mirrored, at the same time in a jump or half a cycle later in a walk or a run, and joined to where the sensor did see it before and after (since version 1.5); joint limits, elbows and knees that bend as hinges, joints and turns no faster than a person's, a chest that does not twist against the pelvis for nothing, a guessed arm kept where the sensor could not see it (since version 1.6), the floor, feet that do not slide, arms kept out of the trunk and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed and which were guessed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
+The motion comes only from the sensors. Where one sensor cannot see (the arm on the far side), the limb is guessed from its partner on the other side, mirrored, at the same time in a jump or half a cycle later in a walk or a run, and joined to where the sensor did see it before and after (since version 1.5); joint limits, elbows and knees that bend as hinges, joints and turns no faster than a person's, a chest that does not twist against the pelvis for nothing, a guessed arm kept where the sensor could not see it (since version 1.6), the floor, feet that do not slide, arms kept out of the trunk and smooth accelerations keep the body plausible, and every frame records which body parts were actually observed and which were guessed. The whole guide, with the recording protocol and the limits: **[docs/motion.md](docs/motion.md)**.
+
+### Several sensors (version 1.8)
+
+Version 1.8 tracks the person with the Ouster and any number of additional sensors recorded in the same take: on 3 Nov 2026 a RoboSense Helios 16P (a second spinning LiDAR) and an ASUS Xtion PRO Live (a depth camera) around the capture zone. Every sensor brings its points (weighted by its noise relative to the Ouster's, and counted per Ouster point so that it adds evidence) and its own free space, at its own time. The hands are fitted too (six PCA coefficients per hand, `--pose-model full55`), from a warm start of the body pose. Because the fit of a fast arm has several local minima, and two runs that differ only in rounding can disagree by more than 10 cm, a take is tracked several times (other sensor combinations, other rounding, backwards in time with `--reverse`) and `select-motion` puts the final motion together frame by frame from the runs that explain the measurements best.
+
+On the 8 takes of 3 Nov (10,800 frames, 10 % of the points held out of every fit), against the first three-sensor production: 1.02 % of the Ouster's points unexplained instead of 1.88 %, Ouster points 6.67 mm from the body instead of 7.09 mm (median of the takes), joint accelerations at the 95th percentile 35.7 instead of 47.4 m/s², toes at rest instead of 21 deg up; every single configuration lost a whole take at least once, the selection never did. Measured limits: the Xtion is useful from 1.3 to 3.4 m only, the fingers are not resolved at 2.5 to 3 m, and an arm that no sensor sees well stays a guess. The guide, with the recipe, the numbers and the limits: **[docs/multisensor.md](docs/multisensor.md)**.
 
 ---
 
@@ -130,10 +136,12 @@ The motion comes only from the LiDAR. Where one sensor cannot see (the arm on th
 | **Smooth** | Normal filtering, then vertex update, then volume restoration, repeated for the rounds you choose. Every parameter is direct: scale, rounds, finishing rounds, normal sigma, deviation limit. `--sweep` writes one mesh per value to compare. |
 | **Detect** | Finds objects rotating about a vertical axis and objects shaped like a standing person in any recording, and gives their centres. |
 | **Moving people** | `capture-motion`, `segment-motion`, `avatar`, `track`, `review-motion`, `export-motion`: from a recording of a person walking or jumping to an animated mesh with per-vertex velocities, through a body model fitted to the person's turntable scan and to every frame. |
+| **Several sensors** | `track --extra-sensors`: the Ouster plus a second LiDAR, a depth camera or both, each with its own image geometry, noise (also growing with range), useful range, free space and timing; `--exclude-sensors` holds sensors out to check the fit with their points; `--pose-model full55` adds the hands, the jaw and the eyes. See docs/multisensor.md. |
+| **Choice among runs** | `select-motion` scores several runs of a take frame by frame and chooses the path that explains the measurements best (whole body, then each arm), as the warm start of a last pass; `track --reverse` gives it runs that went backwards in time; `track --beam-width` carries several tracks at once. |
 | **Synthetic bench** | `simulate-motion` scans a moving body with a simulated OS0-128 (rolling shutter, beam footprint, dropouts) with the exact truth; `evaluate-motion` and `bench-motion` measure joint, velocity and Doppler errors. |
-| **Evaluation and viewer** | `evaluate-take` measures a tracked take against its own measurements, ray by ray (fitted, violation, unexplained), per frame, per body part and per vertex, with heatmap meshes; `view` shows takes in the browser (points, body, guessed limbs, heatmaps, numbers); `bench-rig` compares layouts of the Ouster, a Helios 16 and an Xtion by how much of the body they see. See docs/evaluation.md. |
+| **Evaluation and viewer** | `evaluate-take` measures a tracked take against its own measurements, ray by ray (fitted, violation, unexplained), per frame, per body part and per vertex, with heatmap meshes; `view` shows takes in the browser (points, body, guessed limbs, heatmaps, numbers); `bench-rig` compares layouts of the Ouster, a Helios 16 and an Xtion by how much of the body they see; `viewer-pack` packs a take tracked with several sensors (points of every sensor, metrics, joint uncertainty) for an interactive viewer. See docs/evaluation.md. |
 | **Reproducible** | Every run writes a JSON report with the complete configuration. Settings come from options, TOML/JSON files, or `--set section.name=value`. |
-| **Light install** | Only numpy and open3d for the processing. scipy is not used. Works with the Python that MATLAB uses, for PCs where software can only be installed through MATLAB. |
+| **Light install** | Only numpy and open3d for the processing of static scans; PyTorch and SciPy only for moving people. Works with the Python that MATLAB uses, for PCs where software can only be installed through MATLAB. |
 | **Tested** | Unit and end-to-end tests on synthetic recordings, and a `simulate` command that makes them without the sensor. |
 
 ---
@@ -198,7 +206,7 @@ python -c "import open3d as o3d; o3d.visualization.draw_geometries([o3d.io.read_
 
 ## Installation
 
-Only numpy and open3d are needed for the processing; matplotlib (plots) is optional; ouster-sdk is needed only to record (and pyserial only when this PC drives the motor). scipy is not used. The commands for moving people also need PyTorch (`python -m pip install torch`; the CUDA build on a PC with an NVIDIA GPU), Pillow for the review GIF, and the SMPL-X model files (register at https://smpl-x.is.tue.mpg.de; the licence does not allow putting them in the repository).
+Only numpy and open3d are needed for the processing of static scans; matplotlib (plots) is optional; ouster-sdk is needed only to record (and pyserial only when this PC drives the motor). The commands for moving people also need PyTorch (`python -m pip install torch`; the CUDA build on a PC with an NVIDIA GPU), SciPy, Pillow for the review GIF, and the SMPL-X model files (register at https://smpl-x.is.tue.mpg.de; the licence does not allow putting them in the repository); the hands of `--pose-model full55` need an SMPL-X file with hand PCA components (`--hand-pca`, for example SMPL-X v1.1). The tracker is CPU bound: on a cluster, many CPU cores serve it better than a GPU.
 
 On a PC where new software can only be installed through MATLAB, use the Python that MATLAB uses (`pyenv` in MATLAB shows it) and install the packages for it from MATLAB's Add-On Explorer or with that interpreter. Nothing has to be installed for the package itself: clone the repository and run the commands from its folder.
 
@@ -354,6 +362,22 @@ python -m bodyscan track C:\lidar\sim_walk_seg --avatar C:\lidar\sim_avatar.npz 
 python -m bodyscan evaluate-motion C:\lidar\sim_walk_motion.npz --truth C:\lidar\sim_walk --avatar C:\lidar\sim_avatar.npz
 ```
 
+### Workflow for moving people with several sensors
+
+The take's additional sensors come as a folder (`views.json` and, per sensor, the empty scene and the person in every frame, matched to the Ouster's frames: docs/multisensor.md, section 1). The recipe used for the session of 3 Nov, for one take:
+
+```
+set S=--extra-sensors s02_walk01_extra --extra-sensor-noise xtion:2.0:0.26 --extra-sensor-range xtion:1.3:3.4,helios:3.4:5.2 --toe-weight 0.3
+python -m bodyscan track s02_walk01_seg --avatar s02_avatar.npz --init-full 8 %S% --out runs\forward\motion
+python -m bodyscan track s02_walk01_seg --avatar s02_avatar.npz --init-full 8 %S% --reverse --out runs\backward\motion
+python -m bodyscan select-motion runs\forward\motion.npz runs\backward\motion.npz --segments s02_walk01_seg --extra-sensors s02_walk01_extra --avatar s02_avatar.npz --extra-sensor-range xtion:1.3:3.4,helios:3.4:5.2 --out selected.npz
+python -m bodyscan track s02_walk01_seg --avatar s02_avatar.npz %S% --init-motion selected.npz --out selected_motion
+python -m bodyscan track s02_walk01_seg --avatar s02_avatar.npz %S% --pose-model full55 --hand-pca SMPLX_MALE_v11.npz --no-flat-hand-mean --face-fixed --init-motion selected_motion.npz --out final
+python -m bodyscan viewer-pack final.npz --segments s02_walk01_seg --extra-sensors s02_walk01_extra --avatar s02_avatar.npz --out viewer_packs\final\s02_walk01 --uncertainty-step 5
+```
+
+More runs make a better choice (other sensor combinations such as `--exclude-sensors helios,xtion`, other rounding); `--holdout-fraction 0.1` keeps a tenth of every sensor's points out of every fit to measure the result on them.
+
 ### Detection
 
 ```
@@ -382,6 +406,8 @@ Input: a capture directory, or a folder of point clouds (one `.ply`, `.pcd`, `.x
 | `evaluate-take` | fit quality of a tracked take: pixel classes, per-part tables, kinematics, heatmap meshes |
 | `view` | interactive viewer of tracked takes in the browser (needs viser) |
 | `bench-rig` | coverage of the body by candidate layouts of the Ouster, Helios and Xtion |
+| `select-motion` | the final motion of a take put together from several runs, frame by frame, by how well each explains the measurements |
+| `viewer-pack` | a tracked take packed for an interactive viewer: points of every sensor, metrics, joint uncertainty |
 | `make-test-body` | a procedural body in the SMPL-X file format, for tests without SMPL-X |
 
 ### Configuration
@@ -435,7 +461,11 @@ bodyscan/
     capture/         sensor access, run directory, phases, protocols, motor
     pipelines/       the steps assembled for one setup
     body/            body model in the SMPL-X format: skeleton, rotations, skinning, test body
-    dynamic/         moving people: simulation, segmentation, avatar, tracking, evaluation, export
+    dynamic/         moving people: simulation, segmentation, avatar, tracking (one or several sensors,
+                     body or full pose, forwards, backwards or as a beam), choice among runs, export
+    sensors/         models of the Ouster, Helios and Xtion, range images, clocks, rig files, layouts
+    evaluation/      fit quality without ground truth, heatmaps, coverage, viewer packs
+    viewer/          interactive viewer of tracked takes (Viser, optional)
     commands/        the command line
 ```
 
@@ -447,6 +477,10 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 |---|---|
 | **[Algorithm Lab](https://raw.githack.com/cocopops9/human-motion-3d-rf-sim/main/lidar-body-scan/docs/lab/index.html)** ([docs/lab/index.html](docs/lab/index.html)) | every step of the static pipeline as a live simulation on real data, in the order the commands run it: 1 place the sensor (`check-view`), 2 find the object (foreground, rotation test, person cascade step by step), 3 isolate it, 4 platform angle (frames to angles to the fused cloud), 5 fuse, 6 Poisson, 7 watertight remesh, 8 smoothing (reflection lines in 3D) |
 | [docs/motion.md](docs/motion.md) | moving people: workflow, recording protocol, how the tracking works, accuracy, limits, Sionna RT |
+| [docs/multisensor.md](docs/multisensor.md) | moving people with several sensors (version 1.8): the take's folder, the recipe, how the sensors enter the fit, the choice among runs, backward and beam tracking, the results of 3 Nov 2026, findings and limits |
+| [docs/evaluation.md](docs/evaluation.md) | the numbers without a reference: `evaluate-take`, `view`, `bench-rig`, `viewer-pack` |
+| [docs/multisensor-plan.md](docs/multisensor-plan.md) | the plan of the multi-sensor work and its status (section 17) |
+| [docs/adr](docs/adr) | the design decisions: one frame type for every sensor (0001), the full pose with the hands (0002), additional sensors and the choice among runs (0003) |
 | [docs/hardware.md](docs/hardware.md) | what the OS0-128 can resolve (fingers), and where to put the sensor for a person up to 2 m |
 | [docs/tuning.md](docs/tuning.md) | how each tunable parameter changes the results, organised by symptom |
 | [docs/parameters.md](docs/parameters.md) | every parameter of every command (generated from the code) |
@@ -478,6 +512,7 @@ A pipeline is a list of steps that read and write named entries of a shared cont
 | moving person, synthetic walk at 2 m, 1024 x 20 (test body, avatar fitted to a simulated scan) | joints 13 mm mean (observed parts 9 mm, the far arm 42 mm), body-part velocities 0.11 m/s rms (43 Hz at 60 GHz), standing feet 6 mm/s |
 | moving person, synthetic jumps at 2 m, 1024 x 20 | joints 12 mm mean, body-part velocities 0.14 m/s rms (57 Hz at 60 GHz) |
 | the same jumps at 2048 x 10 | joints 36 mm, velocities 0.62 m/s: record moving people at 1024 x 20 ([docs/motion.md](docs/motion.md), section 6) |
+| moving person, recorded with three sensors (3 Nov 2026, 8 takes, 10,800 frames), final motion (choice among 7 runs per take, full pose) | Ouster points 6.67 mm from the body (median of the takes; held out 6.84 mm, worst take 7.25 mm), Helios 12 to 16 mm, Xtion 16 to 20 mm; 1.02 % of the Ouster's points unexplained (first production: 1.88 %); limb position uncertainty 10.9 mm (Ouster alone: 34.2 mm) ([docs/multisensor.md](docs/multisensor.md), section 6) |
 
 <br>
 

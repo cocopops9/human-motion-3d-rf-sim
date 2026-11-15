@@ -1,6 +1,8 @@
 # ADR 0002: the jaw, the eyes and the hands in the tracker (pose model full55)
 
-**Status:** Proposed (branch feature/full-pose-55); not validated on recorded takes
+**Status:** Accepted in 1.8.0. Used on the recorded takes of 3 Nov 2026, fitted from a warm start of the body pose
+(a cold full-pose fit was poor, docs/multisensor.md section 2); the fingers are not resolved at 2.5 to 3 m, so the hand
+shown follows the prior (docs/multisensor.md section 7)
 **Date:** 2026-10-26
 **Deciders:** Giuseppe D'Auria
 
