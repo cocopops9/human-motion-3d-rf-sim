@@ -10,6 +10,10 @@ This page is the user guide of that tracker. The single-LiDAR tracker it extends
 design and the stages of the multi-sensor work are in [multisensor-plan.md](multisensor-plan.md); the numbers
 and the viewer in [evaluation.md](evaluation.md).
 
+To see what the tracker does with the takes of 3 Nov 2026: the animations and figures of the section
+[Moving people](../README.md#moving-people) of the README, and the interactive viewer
+([docs/motion-viewer/index.html](motion-viewer/index.html), opened from the README).
+
 Everything below was measured on one recorded session (subject s02, 8 takes of 50 to 80 s, 10,800 frames at
 20 Hz) without a ground truth: the measures are how well the body explains the points of each sensor,
 including points held out of the fit, and how much two runs that should agree disagree.
@@ -170,8 +174,9 @@ median over the frames. Acceleration: 95th percentile of the joint accelerations
 
 How to read it:
 
-* Every single configuration lost a whole take at least once (the worst take column: 11.02, 11.85,
-  11.10 mm against 6 to 7.7 mm elsewhere); the selection never did (worst take 7.33 mm).
+* Three of the eight single runs lost a whole take (the worst take column: 11.02, 11.85 and 11.10 mm
+  against 8.14 mm or less in every other case); which ones is partly chance, since the repeat of the first,
+  which differs from it only in rounding, lost none. The selection never lost a take (worst take 7.33 mm).
 * The Ouster's held-out points favour fits that use the Ouster alone or mostly: the Ouster with the Helios
   has the lowest held-out distance in 6 of 8 takes. They cannot judge what only the other sensors see:
   without the Xtion the limb uncertainty triples (34.2 mm with the Ouster alone, 11.8 mm with the Xtion).

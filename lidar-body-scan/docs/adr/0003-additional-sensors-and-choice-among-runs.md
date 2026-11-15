@@ -49,8 +49,9 @@ single-Ouster objective unchanged and lets every additional point add evidence i
 ### Final motion: one run (rejected), a best configuration chosen once per take, a choice per frame (chosen)
 
 One run is a sample. A configuration chosen per take still fails where another succeeds: in the comparison
-of 3 Nov every single configuration lost a whole take at least once (Ouster held-out distance 11 to 12 mm
-against 6 to 7.7 mm elsewhere), the choice per frame never did (worst take 7.33 mm).
+of 3 Nov three of the eight single runs lost a whole take (Ouster held-out distance 11.0 to 11.9 mm against
+8.1 mm or less in every other case), which ones is partly chance (a run that differs from one of them only in
+rounding did not), and the choice per frame never lost one (worst take 7.33 mm).
 
 ### Several hypotheses inside the tracker (beam search, kept as an option)
 

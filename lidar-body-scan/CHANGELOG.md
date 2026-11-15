@@ -20,8 +20,10 @@ sensor's points held out of every fit; medians over the takes; no ground truth):
 | Ouster alone | 6.56 mm | 6.74 (11.85) mm | 1.16 % | 34.2 mm | 31.9 m/s² | 0.0° |
 | choice among 7 runs per take, last pass, full pose (final) | 6.67 mm | 6.84 (7.25) mm | 1.02 % | 10.9 mm | 35.7 m/s² | -0.1° |
 
-* Every single configuration lost a whole take at least once (held-out distance 11 to 12 mm against 6 to
-  7.7 mm elsewhere); the choice among runs never did.
+* Three of the eight single runs (the Ouster alone, the Ouster with the Helios, and the three sensors with
+  the Xtion's noise growing with range) lost a whole take: held-out distance 11.0 to 11.9 mm against 8.1 mm
+  or less in every other case. Which run loses a take is partly chance: the repeat of the last one, which
+  differs from it only in rounding, did not lose it. The choice among runs never lost a take (worst 7.25 mm).
 * Unexplained: share of the Ouster's points 5 to 25 cm from the body. Limb uncertainty: largest standard
   deviation of the knees, ankles, elbows and wrists from the Gauss-Newton covariance, median over frames.
 
@@ -34,6 +36,12 @@ tracked 4 of 16 reference windows facing backwards), the hand search (`--hand-st
 frames, `review-motion --extra-sensors` and `--focus hands`, `track --joints-csv`; the help of
 `--extra-sensor-range` gives the Xtion's useful range; docs/parameters.md regenerated (15 new options; a few section
 descriptions no longer indented, which Markdown showed as code); docs/evaluation.md no longer names a cluster account.
+
+Pictures and viewer: the section on moving people of the README shows animations and figures made from the real takes of 3 Nov 2026
+(`docs/img/motion_*`: the pipeline, the rig, who sees what, how a frame is fitted, the hands, the seven runs of a
+take, the choice among runs, what the other sensors buy), and `docs/motion-viewer/index.html` is an interactive viewer
+of four tracked takes (three.js, data embedded, about 5 MB). The viewer draws the body as capsules around the
+tracked skeleton: the SMPL-X mesh is not redistributed.
 
 Not kept: stage 2 with more correspondence rounds (no effect beyond 2 mm); the beam as the default (dominated
 by a backward run plus the choice among runs, at 3.5 times the time of a forward run); the Xtion beyond
